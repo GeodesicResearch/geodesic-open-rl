@@ -11,7 +11,7 @@ The migration requires:
 3. **GPU topology adjustments** from 8 GPUs/node to 4 GPUs/node
 4. **Job chaining** for runs exceeding the 24-hour walltime, reusing our proven `SLURM_JOB_CHAIN_COUNT` pattern
 
-**Highest risk**: vLLM 0.14.1 on aarch64 — no confirmed wheel exists. Must validate early.
+**Highest risk** ~~vLLM 0.14.1 on aarch64~~ — **RESOLVED**: vLLM imports fine on aarch64 (validated in job 2252827). Actual blocker was PyTorch cu130 driver mismatch (see below).
 
 ---
 
@@ -151,9 +151,9 @@ Training config adapted from `scripts/train/olmo3/7b_rlzero_general.sh`. Key adj
 Total: 20 learner + 20 inference = 40 GPUs = 10 nodes × 4 GPUs. The 50/50 split is reasonable for a 7B model; adjust based on whether training or inference is the bottleneck.
 
 Other changes:
-- `--checkpoint_state_dir /projects/a5k/public/checkpoints/grpo-rlzero/<exp_name>` (shared filesystem)
-- `--output_dir /projects/a5k/public/models/grpo-rlzero/<exp_name>`
-- `--no_try_launch_beaker_eval_jobs` (disable Beaker eval integration)
+- `--checkpoint_state_dir /projects/a5k/public/checkpoints_${USER}/grpo-rlzero/<exp_name>` (shared filesystem, per-user)
+- `--output_dir /projects/a5k/public/models_${USER}/grpo-rlzero/<exp_name>` (per-user)
+- `--try_launch_beaker_eval_jobs_on_weka` is omitted (defaults to False; no `--no_try_launch_beaker_eval_jobs` flag exists in `grpo_fast.py`)
 - `--vllm_sync_backend gloo` (safer than NCCL for weight sync on Slingshot — switch to `nccl` after validation)
 - `--push_to_hub false` (upload manually after training)
 
@@ -172,14 +172,15 @@ UV environment setup for aarch64. Run via `sbatch run_on_compute.sbatch bash con
 
 1. Load modules, set compilers and `TORCH_CUDA_ARCH_LIST=9.0`
 2. `uv venv --python 3.12 .venv && uv sync`
-3. Build flash-attn from source (excluded on aarch64 by `pyproject.toml:34`)
-4. Validate vLLM import (build from source if wheel fails)
-5. Install GH200 sm_90a `sitecustomize.py` fix (copy from `geodesic-gpt-neox/.venv/`)
-6. Run import verification for all key packages
+3. **Replace torch cu130 with cu126** — `pyproject.toml` directs aarch64 to the cu130 index, but Isambard's driver (565.57.01 / CUDA 12.7) is too old. Step 5b reinstalls torch from `https://download.pytorch.org/whl/cu126`. We do NOT modify `pyproject.toml`; this is an Isambard-specific workaround.
+4. Build flash-attn from source (excluded on aarch64 by `pyproject.toml:34`)
+5. Validate vLLM import (build from source if wheel fails)
+6. Install GH200 sm_90a `sitecustomize.py` fix
+7. Run import verification for all key packages
 
 ---
 
-## File That May Need Modification
+## `pyproject.toml` — NOT Modified
 
 ### `pyproject.toml` (lines 56-59)
 
@@ -190,19 +191,19 @@ torch = [
 ]
 ```
 
-The aarch64 source points to PyTorch `cu130` wheels. Isambard has CUDA 12.6. If the driver is too old for cu130 (needs driver >=560), change to `cu126`. Check with `nvidia-smi` on a compute node first.
+**Status: CONFIRMED INCOMPATIBLE, workaround applied.** The cu130 torch requires a CUDA 13.0+ driver. Isambard's GH200 nodes have driver 565.57.01 (CUDA 12.7). Rather than modifying `pyproject.toml` (which would affect all platforms), `setup_open_instruct_env.sh` Step 5b replaces torch with a cu126 build after `uv sync`.
 
 ---
 
 ## Risk Assessment
 
-| Risk | Severity | Evidence | Mitigation |
-|---|---|---|---|
-| **vLLM 0.14.1 on aarch64** | HIGH | `pyproject.toml:30` includes vLLM on aarch64 but no confirmed ARM wheel | Try pip install → build from source → try older version |
-| **PyTorch cu130 on CUDA 12.6** | MEDIUM | `pyproject.toml:58` directs aarch64 to cu130 index | Check driver version; override to cu126 if needed |
-| **NCCL OFI + venv NCCL mismatch** | MEDIUM | `pretrain_neox.sbatch:33-36` shows venv NCCL is needed for PyTorch compat | Pin `nvidia-nccl-cu12` version; use `--vllm_sync_backend gloo` initially |
-| **flash-attn build** | LOW | Already working in geodesic-gpt-neox (2.6.3); need >=2.8.3 | Same build process, just newer version |
-| **Ray on ARM** | LOW | Official aarch64 wheels exist for Ray | Should work out of the box |
+| Risk | Severity | Status | Evidence | Mitigation |
+|---|---|---|---|---|
+| **vLLM 0.14.1 on aarch64** | HIGH | **RESOLVED** | Imports fine in job 2252827 | aarch64 wheel exists and works |
+| **PyTorch cu130 on CUDA 12.6** | MEDIUM | **FIXED** | Driver 565.57.01 (CUDA 12.7) too old for cu130 | `setup_open_instruct_env.sh` Step 5b replaces with cu126 build |
+| **NCCL OFI + venv NCCL mismatch** | MEDIUM | OPEN | `pretrain_neox.sbatch:33-36` shows venv NCCL is needed for PyTorch compat | Pin `nvidia-nccl-cu12` version; use `--vllm_sync_backend gloo` initially |
+| **flash-attn build** | LOW | **RESOLVED** | Built successfully in job 2252827 | Same build process as geodesic-gpt-neox |
+| **Ray on ARM** | LOW | **RESOLVED** | Imports and initializes fine in job 2252827 | Official aarch64 wheels work |
 
 ---
 
