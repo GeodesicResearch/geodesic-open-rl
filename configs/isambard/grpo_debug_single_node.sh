@@ -38,7 +38,7 @@ TRAINING_ARGS="\
     --dataset_mixer_eval_list_splits test \
     --seed 42 \
     --save_freq 10 \
-    --checkpoint_state_freq 10 \
+    --checkpoint_state_freq 3 \
     --checkpoint_state_dir /projects/a5k/public/checkpoints_${USER}/grpo-rlzero/${EXP_NAME} \
     --push_to_hub false \
     --with_tracking false \
