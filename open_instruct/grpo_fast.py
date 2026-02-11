@@ -2051,7 +2051,17 @@ def main(
     beaker_config, wandb_url = setup_experiment_tracking(args, tc, model_config)
 
     # We have to initialize ray earlier for constructing Tools (they are implemented as ray actors).
-    ray.init(dashboard_host="0.0.0.0", runtime_env={"excludes": [".git/"], "env_vars": dict(os.environ)})
+    # Only propagate env vars that workers actually need. Passing the full os.environ
+    # (which includes large SLURM variables) can exceed Linux's execve() arg limit and
+    # cause Ray to silently hang (see ray-project/ray#47432).
+    _RAY_ENV_PREFIXES = ("NCCL_", "CUDA_HOME", "TORCH_", "VLLM_", "FI_", "RAY_", "HF_", "PYTHON")
+    _RAY_ENV_EXTRAS = {"PATH", "HOME", "TMPDIR", "CC", "CXX", "USER"}
+    # CUDA_VISIBLE_DEVICES must NOT be forwarded — Ray sets it per-actor for GPU isolation.
+    _ray_env_vars = {
+        k: v for k, v in os.environ.items()
+        if (k.startswith(_RAY_ENV_PREFIXES) or k in _RAY_ENV_EXTRAS) and k != "CUDA_VISIBLE_DEVICES"
+    }
+    ray.init(dashboard_host="0.0.0.0", runtime_env={"excludes": [".git/", ".venv/"], "env_vars": _ray_env_vars})
 
     tool_actors, tool_definitions, tool_stop_sequences, tool_call_names = initialize_tools(tools_config, tokenizer)
     logger.info(
@@ -2072,7 +2082,6 @@ def main(
         pass_tools_to_chat_template=tools_config.pass_tools_to_chat_template,
         configured_tool_call_names=tools_config.tool_call_names if tools_config.enabled else None,
     )
-
     if len(train_dataset) < (
         needed := max(streaming_config.async_steps, 1) * streaming_config.num_unique_prompts_rollout
     ):

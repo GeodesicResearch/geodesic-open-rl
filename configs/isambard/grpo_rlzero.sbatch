@@ -42,10 +42,15 @@ module load cuda/12.6
 # Load OFI plugin for NCCL (provides Slingshot support)
 module load brics/aws-ofi-nccl/1.8.1
 
-# --- NCCL from venv (LD_PRELOAD) ---
+# --- NCCL from venv ---
+# System NCCL 2.26.6 is too old for PyTorch 2.9.1 (missing ncclCommWindowRegister).
+# PyTorch's bundled NCCL 2.27.5 misidentifies GH200 PCI bus IDs ("Duplicate GPU" error),
+# so we cannot use multi-rank NCCL process groups on a single node.
+# Workaround: use 1 learner per node (no intra-node NCCL needed).
 VENV_SP="$REPO_DIR/.venv/lib/python3.12/site-packages"
 export NCCL_LIBRARY="$VENV_SP/nvidia/nccl/lib/libnccl.so.2"
-export LD_PRELOAD="$NCCL_LIBRARY"
+# NOTE: Do NOT export LD_PRELOAD globally — Ray workers inherit it and it causes issues.
+# Apply per-command only (see python invocations below).
 
 # --- Compilers and CUDA arch ---
 export CC=/usr/bin/gcc-12
@@ -87,9 +92,12 @@ export RAY_CGRAPH_get_timeout=300
 export TMPDIR=/projects/a5k/public/tmp_${USER}
 mkdir -p "$TMPDIR"
 
+# --- Unbuffered Python output so logs appear in real time ---
+export PYTHONUNBUFFERED=1
+
 # --- Log PyTorch / CUDA info ---
 echo "===== PyTorch & CUDA info ====="
-python - <<'PY'
+LD_PRELOAD="$NCCL_LIBRARY" python - <<'PY'
 import os, torch
 print(f"PyTorch: {torch.__version__}")
 print(f"torch.version.cuda: {torch.version.cuda}")
@@ -112,11 +120,28 @@ echo "===== Job Chain Info ====="
 echo "Current chain iteration: $CURRENT_CHAIN / $MAX_JOB_CHAINS"
 echo "=========================="
 
-# --- Start Ray cluster on all nodes ---
+# --- Start Ray cluster ---
+# Ray head must run in the sbatch process context (not srun) so grpo_fast.py
+# can connect via ray.init(). Workers on other nodes use srun.
 echo "Starting Ray cluster across $SLURM_NNODES nodes..."
-srun --export=ALL bash configs/isambard/ray_node_setup_slurm.sh &
-SRUN_PID=$!
-sleep 30
+
+RAY_NODE_PORT=8888
+mkdir -p "$HOME/.triton/autotune"
+ray stop --force 2>/dev/null || true
+
+echo "Starting Ray head on $(hostname)..."
+ray start --head --port=$RAY_NODE_PORT --num-gpus=4 --num-cpus=32 --dashboard-host=0.0.0.0
+
+# Start workers on non-head nodes (if multi-node)
+SRUN_PID=""
+if [ "$SLURM_NNODES" -gt 1 ]; then
+    HEAD_NODE=$(scontrol show hostname "$SLURM_NODELIST" | head -n 1)
+    echo "Starting Ray workers on $((SLURM_NNODES - 1)) non-head nodes..."
+    srun --export=ALL --nodes=$((SLURM_NNODES - 1)) --exclude="$HEAD_NODE" \
+         bash configs/isambard/ray_node_setup_slurm.sh &
+    SRUN_PID=$!
+    sleep 30
+fi
 
 echo "===== Ray Cluster Status ====="
 ray status || echo "Warning: ray status failed (cluster may still be initializing)"
@@ -127,14 +152,17 @@ source "$TRAINING_CONFIG"
 
 # --- Run training on head node ---
 echo "Launching grpo_fast.py..."
-python open_instruct/grpo_fast.py $TRAINING_ARGS
+LD_PRELOAD="$NCCL_LIBRARY" python open_instruct/grpo_fast.py $TRAINING_ARGS 2>&1
 TRAIN_EXIT=$?
 
 echo "Training exited with code: $TRAIN_EXIT"
 
 # --- Cleanup Ray ---
 echo "Cleaning up Ray cluster..."
-kill $SRUN_PID 2>/dev/null; wait $SRUN_PID 2>/dev/null || true
+if [ -n "$SRUN_PID" ]; then
+    kill $SRUN_PID 2>/dev/null; wait $SRUN_PID 2>/dev/null || true
+fi
+ray stop --force 2>/dev/null || true
 
 # --- Job chaining ---
 if [ "$CURRENT_CHAIN" -lt "$MAX_JOB_CHAINS" ]; then

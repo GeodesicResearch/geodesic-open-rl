@@ -17,20 +17,22 @@ TRAINING_ARGS="\
     --per_device_train_batch_size 1 \
     --dataset_mixer_list ai2-adapt-dev/math_ground_truth_zs 1.0 \
     --dataset_mixer_list_splits train \
-    --max_token_length 2048 \
     --max_prompt_token_length 1024 \
     --response_length 2048 \
+    --pack_length 3072 \
     --model_name_or_path Qwen/Qwen2.5-0.5B \
     --chat_template_name qwen \
     --temperature 1.0 \
     --total_episodes 100 \
     --deepspeed_stage 0 \
-    --num_learners_per_node 2 \
-    --vllm_num_engines 2 \
+    --num_learners_per_node 1 \
+    --vllm_num_engines 3 \
     --vllm_tensor_parallel_size 1 \
     --vllm_sync_backend gloo \
     --lr_scheduler_type constant \
     --apply_verifiable_reward true \
+    --dataset_mixer_eval_list ai2-adapt-dev/math_ground_truth_zs 1.0 \
+    --dataset_mixer_eval_list_splits test \
     --seed 42 \
     --save_freq 10 \
     --checkpoint_state_freq 10 \

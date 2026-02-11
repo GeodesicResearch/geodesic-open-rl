@@ -37,7 +37,6 @@ TRAINING_ARGS="\
     --dataset_mixer_list_splits train \
     --dataset_mixer_eval_list $LOCAL_EVALS \
     --dataset_mixer_eval_list_splits $LOCAL_EVAL_SPLITS \
-    --max_token_length 10240 \
     --max_prompt_token_length 2048 \
     --response_length 16384 \
     --pack_length 18432 \
