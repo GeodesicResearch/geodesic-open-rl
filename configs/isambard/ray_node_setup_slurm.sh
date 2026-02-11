@@ -13,18 +13,21 @@ unset LD_PRELOAD  # Ray workers must not preload NCCL
 # https://github.com/vllm-project/vllm/issues/5723#issuecomment-2554389656
 export NCCL_CUMEM_ENABLE=0
 
-# Derive head node IP from SLURM
-HEAD_HOSTNAME=$(scontrol show hostname "$SLURM_NODELIST" | head -n 1)
-HEAD_IP=$(getent hosts "$HEAD_HOSTNAME" | awk '{print $1}')
+# HEAD_IP is inherited from sbatch via srun --export=ALL.
+# Resolve this worker's own IP for consistent Ray binding.
+WORKER_IP=$(getent hosts "$(hostname)" | awk '{print $1; exit}')
 
 RAY_NODE_PORT=8888
 mkdir -p "$HOME/.triton/autotune"  # Silence Triton autotune cache warnings
+# RAY_TMPDIR is inherited from sbatch; create it on this node's local FS.
+mkdir -p "$RAY_TMPDIR"
 ray stop --force
 
 echo "Starting Ray worker node $SLURM_NODEID on $(hostname)"
 export RAY_ADDRESS="${HEAD_IP}:${RAY_NODE_PORT}"
 # Start worker without --block so we can control lifecycle and exit code.
-ray start --address="${RAY_ADDRESS}" --num-gpus=4 --num-cpus=32 --dashboard-host=0.0.0.0
+ray start --address="${RAY_ADDRESS}" --node-ip-address="$WORKER_IP" \
+    --temp-dir="$RAY_TMPDIR" --num-gpus=4 --num-cpus=32 --dashboard-host=0.0.0.0
 
 cleanup() {
     echo "[ray_node_setup] Cleanup: stopping Ray worker and exiting 0"

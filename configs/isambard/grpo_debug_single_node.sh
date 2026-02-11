@@ -4,6 +4,9 @@
 #
 # Usage: sbatch --nodes=1 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_debug_single_node.sh
 
+# Disable job chaining for debug runs
+export MAX_JOB_CHAINS=0
+
 EXP_NAME="${EXP_NAME:-grpo_debug_single_node}"
 
 TRAINING_ARGS="\

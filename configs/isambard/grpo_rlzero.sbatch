@@ -72,7 +72,10 @@ export FI_MR_CACHE_MONITOR=userfaultfd
 export FI_CXI_DISABLE_HOST_REGISTER=1
 
 # --- Networking ---
-export MASTER_ADDR=$(scontrol show hostname "$SLURM_NODELIST" | head -n 1)
+HEAD_HOSTNAME=$(scontrol show hostname "$SLURM_NODELIST" | head -n 1)
+# Resolve to a stable IP. getent may return multiple; take the first.
+export HEAD_IP=$(getent hosts "$HEAD_HOSTNAME" | awk '{print $1; exit}')
+export MASTER_ADDR="$HEAD_IP"
 export MASTER_PORT=$((29500 + SLURM_JOB_ID % 1000))
 
 # --- HuggingFace offline mode ---
@@ -87,10 +90,16 @@ export VLLM_ALLOW_INSECURE_SERIALIZATION=1
 export VLLM_LOGGING_LEVEL=WARNING
 export NCCL_DEBUG=ERROR
 export RAY_CGRAPH_get_timeout=300
+export RAY_raylet_start_wait_time_s=120
+export RAY_gcs_rpc_server_connect_timeout_s=60
 
 # --- Temp directory ---
 export TMPDIR=/projects/a5k/public/tmp_${USER}
 mkdir -p "$TMPDIR"
+
+# Ray needs a node-local temp dir for Unix domain sockets (NFS doesn't support them).
+export RAY_TMPDIR="/tmp/ray_${USER}_${SLURM_JOB_ID}"
+mkdir -p "$RAY_TMPDIR"
 
 # --- Unbuffered Python output so logs appear in real time ---
 export PYTHONUNBUFFERED=1
@@ -129,8 +138,12 @@ RAY_NODE_PORT=8888
 mkdir -p "$HOME/.triton/autotune"
 ray stop --force 2>/dev/null || true
 
-echo "Starting Ray head on $(hostname)..."
-ray start --head --port=$RAY_NODE_PORT --num-gpus=4 --num-cpus=32 --dashboard-host=0.0.0.0
+echo "Starting Ray head on $(hostname) (IP: $HEAD_IP)..."
+ray start --head --port=$RAY_NODE_PORT --node-ip-address="$HEAD_IP" \
+    --temp-dir="$RAY_TMPDIR" --num-gpus=4 --num-cpus=32 --dashboard-host=0.0.0.0
+
+# Set RAY_ADDRESS so ray.init() in grpo_fast.py auto-connects to this cluster.
+export RAY_ADDRESS="$HEAD_IP:$RAY_NODE_PORT"
 
 # Start workers on non-head nodes (if multi-node)
 SRUN_PID=""
@@ -140,7 +153,33 @@ if [ "$SLURM_NNODES" -gt 1 ]; then
     srun --export=ALL --nodes=$((SLURM_NNODES - 1)) --exclude="$HEAD_NODE" \
          bash configs/isambard/ray_node_setup_slurm.sh &
     SRUN_PID=$!
-    sleep 30
+    # Wait for all nodes to join (poll ray status)
+    EXPECTED_GPUS=$((SLURM_NNODES * 4))
+    echo "Waiting for $SLURM_NNODES nodes ($EXPECTED_GPUS GPUs) to join Ray cluster..."
+    for i in $(seq 1 180); do
+        CURRENT_GPUS=$(python -c "
+import ray, sys
+try:
+    ray.init(address='$HEAD_IP:$RAY_NODE_PORT', ignore_reinit_error=True)
+    gpus = ray.cluster_resources().get('GPU', 0)
+    print(int(gpus))
+except:
+    print(0)
+" 2>/dev/null)
+        if [ "$CURRENT_GPUS" -ge "$EXPECTED_GPUS" ]; then
+            echo "All $SLURM_NNODES nodes registered ($CURRENT_GPUS GPUs)."
+            break
+        fi
+        if [ $((i % 30)) -eq 0 ]; then
+            echo "  ... $CURRENT_GPUS/$EXPECTED_GPUS GPUs after ${i}s"
+        fi
+        sleep 1
+    done
+    if [ "$CURRENT_GPUS" -lt "$EXPECTED_GPUS" ]; then
+        echo "ERROR: Only $CURRENT_GPUS/$EXPECTED_GPUS GPUs after 180s. Aborting."
+        ray status || true
+        exit 1
+    fi
 fi
 
 echo "===== Ray Cluster Status ====="
@@ -163,12 +202,14 @@ if [ -n "$SRUN_PID" ]; then
     kill $SRUN_PID 2>/dev/null; wait $SRUN_PID 2>/dev/null || true
 fi
 ray stop --force 2>/dev/null || true
+rm -rf "$RAY_TMPDIR" 2>/dev/null || true
 
 # --- Job chaining ---
 if [ "$CURRENT_CHAIN" -lt "$MAX_JOB_CHAINS" ]; then
     NEXT_CHAIN=$((CURRENT_CHAIN + 1))
     echo "Submitting chained job $NEXT_CHAIN / $MAX_JOB_CHAINS"
     sbatch --dependency=afterany:$SLURM_JOB_ID \
+           --nodes=$SLURM_NNODES \
            --export=ALL,SLURM_JOB_CHAIN_COUNT=$NEXT_CHAIN \
            configs/isambard/grpo_rlzero.sbatch "$TRAINING_CONFIG"
 fi
