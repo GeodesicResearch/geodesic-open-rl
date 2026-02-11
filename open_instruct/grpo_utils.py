@@ -134,9 +134,9 @@ class ExperimentConfig:
     """If toggled, debug output will be shown"""
     with_tracking: bool = False
     """If toggled, this experiment will be tracked with Weights and Biases"""
-    wandb_project_name: str = "open_instruct_internal"
+    wandb_project_name: str = "geodesic-grpo"
     """The wandb's project name"""
-    wandb_entity: str | None = None
+    wandb_entity: str | None = "geodesic"
     """The entity (team) of wandb's project"""
     push_to_hub: bool = True
     """Whether to upload the saved model to huggingface"""

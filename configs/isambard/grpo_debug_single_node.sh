@@ -41,6 +41,6 @@ TRAINING_ARGS="\
     --checkpoint_state_freq 3 \
     --checkpoint_state_dir /projects/a5k/public/checkpoints_${USER}/grpo-rlzero/${EXP_NAME} \
     --push_to_hub false \
-    --with_tracking false \
+    --with_tracking true \
     --output_dir /projects/a5k/public/models_${USER}/grpo-rlzero/${EXP_NAME}/checkpoints \
 "
