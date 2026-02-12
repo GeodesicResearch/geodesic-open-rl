@@ -53,7 +53,10 @@ from dataclasses import dataclass
 from multiprocessing import resource_tracker as _rt
 from typing import Any, NewType
 
-import beaker
+try:
+    import beaker
+except ImportError:
+    beaker = None  # Not needed on Isambard (AI2-internal)
 import numpy as np
 import ray
 import requests
