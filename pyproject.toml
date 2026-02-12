@@ -94,7 +94,7 @@ environments = [
 
 [dependency-groups]
 dev = [
-    "beaker-py>=2.5.3",
+
     "mkdocs-material>=9.6.8",
     "pytest>=8.3.4",
     "ruff>=0.11.13",
@@ -155,7 +155,7 @@ ignore = [
 "open_instruct/vllm_utils_workerwrap.py" = ["PLC0415"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["open_instruct", "mason"]
+known-first-party = ["open_instruct"]
 # case insensitive to match isort --profile black
 case-sensitive = false
 # Disable split-on-trailing-comma to work with skip-magic-trailing-comma
@@ -177,17 +177,14 @@ include = [
     "open_instruct/dataset_transformation.py",
     "open_instruct/data_loader.py",
     "open_instruct/data_types.py",
-    "open_instruct/dpo_config.py",
-    "open_instruct/dpo_utils.py",
     "open_instruct/grpo_utils.py",
     "open_instruct/logger_utils.py",
     "open_instruct/mix_data.py",
     "open_instruct/mix_data_preferences.py",
     "open_instruct/olmo_core_train_modules.py",
     "open_instruct/padding_free_collator.py",
-    "open_instruct/rejection_sampling/prompt_templates.py",
     "open_instruct/rl_utils.py",
     "open_instruct/tools/tools.py",
     "open_instruct/tools/generic_mcp.py",
 ]
-exclude = ["scripts/", "decontamination/", "human_eval/"]
+exclude = ["scripts/"]

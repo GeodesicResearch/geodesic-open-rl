@@ -1,41 +1,79 @@
-# Bash commands
-- `uv run pytest`: Run the tests.
-- `make style && make quality` run the linter + formatter.
-- `uv run mkdocs serve`: View the documentation locally at http://127.0.0.1:8000/
-- `uv run mkdocs build`: Build the documentation to the `site/` directory.
+# Geodesic Open-Instruct — Claude Code Guide
 
+## Quick Reference
 
+| What | Where |
+|------|-------|
+| Submit job | `sbatch configs/isambard/grpo_rlzero.sbatch` |
+| Logs | `/projects/a5k/public/logs_puria.a5k/open-instruct/` |
+| Checkpoints | `/projects/a5k/public/checkpoints_puria.a5k/` |
+| Models | `/projects/a5k/public/models_puria.a5k/` |
+| W&B | [geodesic/geodesic-grpo](https://wandb.ai/geodesic/geodesic-grpo) |
+| Configs | `configs/isambard/` |
 
-# Workflow
-- When creating a PR, always add a summary to `CHANGELOG.md` with a link to the PR (e.g., `- Description of change (https://github.com/allenai/open-instruct/pull/123).`).
-- Always run the linter and make sure the tests pass before finishing a task.
+## Commands
+
+```bash
+# Linter + formatter
+make style && make quality
+
+# Tests
+uv run pytest               # full suite
+uv run pytest tests/test_X  # single test (preferred during dev)
+```
+
+## Workflow Rules
+
+- Always `scancel <jobid>` previous jobs before submitting new ones. Never `scancel -u`.
+- Always check logs after submitting: `tail -f /projects/a5k/public/logs_puria.a5k/open-instruct/<job>.out`
+- Run `make style && make quality` before finishing any task.
 - Prefer running single tests, not the whole suite, when developing.
-- To run the `./scripts/train/build_image_and_launch.sh` script, you must commit the current changes.
-- To launch experiment scripts, use the `build_image_and_launch.sh` script, like this: `./scripts/train/build_image_and_launch.sh $SOME_SCRIPT`.
-- For GRPO, we have three test scripts:
-  - `scripts/train/debug/single_gpu_on_beaker.sh`: single GPU, no tools (~8 minutes).
-  - `scripts/train/debug/tools/olmo_3_parser_multigpu.sh`: multi GPU, with tools.
-  - `scripts/train/debug/large_test_script.sh`: two 8x GPU nodes, no tools (~32 minutes).
-- For DPO, we have three test scripts:
-  - `scripts/train/debug/dpo/local.sh`: local single GPU (no Beaker).
-  - `scripts/train/debug/dpo/single_gpu.sh`: single GPU on Beaker.
-  - `scripts/train/debug/dpo/multi_node.sh`: two 8x GPU nodes on Beaker.
-- To run the `./scripts/train/build_image_and_launch.sh` script, you must commit the current changes.
-- Launch tool use experiments by running `./scripts/train/build_image_and_launch.sh scripts/train/debug/tools/olmo_3_parser_multigpu.sh`.
-- Launch multi-node non-tool experiments by running `./scripts/train/build_image_and_launch.sh scripts/train/debug/large_test_script.sh`.
-- Launch DPO experiments by running `./scripts/train/build_image_and_launch.sh scripts/train/debug/dpo/single_gpu.sh`.
-- Launch multi-node DPO experiments by running `./scripts/train/build_image_and_launch.sh scripts/train/debug/dpo/multi_node.sh`.
-- Launch the GPU tests with `./scripts/train/build_image_and_launch.sh scripts/train/debug/run_gpu_tests.sh`.
-- If you are given a Beaker URL (beaker\.allen\.ai.*) use the Beaker CLI tool to interact with it.
+- Never commit secrets or large binaries.
 
-# Coding conventions
+## Config Structure
+
+Training runs are configured via two layers:
+
+1. **SBATCH script** (`configs/isambard/grpo_rlzero.sbatch`) — SLURM settings, Ray cluster setup, env vars
+2. **Training config** (`configs/isambard/grpo_*.sh`) — model, dataset, hyperparams, passed as args to `grpo_fast.py`
+
+The sbatch script sources the training config and launches `open_instruct/grpo_fast.py`.
+
+## Architecture (Ray + DeepSpeed + vLLM + Gloo)
+
+Each node runs:
+- **1 learner** (DeepSpeed) — forward/backward/optimizer on policy model
+- **3 vLLM engines** — fast rollout generation
+
+Ray orchestrates actors across nodes. Weight sync uses a Gloo process group ("openrlhf") to broadcast updated weights from rank-0 learner to all vLLM engines.
+
+See `docs/architecture.md` for the full educational guide.
+
+## Isambard GH200 Gotchas
+
+| Issue | Fix |
+|-------|-----|
+| 288 reported CPUs | `--num-cpus=32` on `ray start` |
+| Multi-NIC IP non-determinism | `--node-ip-address` on head and workers |
+| NFS can't handle Ray Unix sockets | `--temp-dir=/tmp/ray_${USER}_${SLURM_JOB_ID}` |
+| SLURM env vars too large for Ray | Filter `env_vars` to needed prefixes only (`grpo_fast.py:2057-2063`) |
+| NCCL "Duplicate GPU" on GH200 | 1 learner per node (no intra-node multi-rank NCCL) |
+| `LD_PRELOAD` poisoning | Per-command prefix only, never global export in Ray scripts |
+| `RAY_ADDRESS` not set | Export after `ray start --head` so `ray.init()` connects to cluster |
+
+## Coding Conventions
+
 - Never use `import logging` or `logging.info()` directly. Always use `logger = logger_utils.setup_logger(__name__)` and `logger.info()`.
 - Imports always go at the top of the file, never inline.
 - Use `from package import module` instead of `import package.module`.
 
-# Documentation
-To verify that documentation changes don't alter the generated output:
-1. Build docs on your branch: `uv run mkdocs build && cp -r site site-branch`
-2. Switch to main branch and build: `cd /path/to/main && uv run mkdocs build`
-3. Compare the builds: `diff -rq site-branch /path/to/main/site`
-4. If no output, the docs are identical. If differences exist, review with: `diff -r site-branch /path/to/main/site`
+## Key Source Files
+
+| File | Purpose |
+|------|---------|
+| `open_instruct/grpo_fast.py` | Main training: actors, placement groups, training loop, weight sync |
+| `open_instruct/grpo_utils.py` | Config dataclasses, GRPO loss computation |
+| `open_instruct/vllm_utils.py` | vLLM engine wrapper, weight broadcast, process group init |
+| `open_instruct/data_loader.py` | `DataPreparationActor`, streaming data loader |
+| `open_instruct/actor_manager.py` | Ray actor lifecycle management |
+| `open_instruct/rl_utils.py` | RL utilities (rewards, advantage computation) |

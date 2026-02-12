@@ -2058,7 +2058,8 @@ def main(
     _RAY_ENV_EXTRAS = {"PATH", "HOME", "TMPDIR", "CC", "CXX", "USER"}
     # CUDA_VISIBLE_DEVICES must NOT be forwarded — Ray sets it per-actor for GPU isolation.
     _ray_env_vars = {
-        k: v for k, v in os.environ.items()
+        k: v
+        for k, v in os.environ.items()
         if (k.startswith(_RAY_ENV_PREFIXES) or k in _RAY_ENV_EXTRAS) and k != "CUDA_VISIBLE_DEVICES"
     }
     ray.init(dashboard_host="0.0.0.0", runtime_env={"excludes": [".git/", ".venv/"], "env_vars": _ray_env_vars})
