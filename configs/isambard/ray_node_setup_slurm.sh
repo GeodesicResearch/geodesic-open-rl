@@ -23,6 +23,22 @@ mkdir -p "$HOME/.triton/autotune"  # Silence Triton autotune cache warnings
 mkdir -p "$RAY_TMPDIR"
 ray stop --force
 
+# --- Start code execution server (for code reward verification) ---
+CODE_SERVER_PID=""
+if [ "${START_CODE_SERVER:-0}" = "1" ]; then
+    echo "[ray_node_setup] Starting code execution server on $(hostname)..."
+    uvicorn open_instruct.code_utils.api:app \
+        --host 0.0.0.0 --port 1234 --workers 16 \
+        > "$TMPDIR/code_server_$(hostname)_${SLURM_JOB_ID}.log" 2>&1 &
+    CODE_SERVER_PID=$!
+    sleep 2
+    if curl -s http://localhost:1234/health > /dev/null 2>&1; then
+        echo "[ray_node_setup] Code server running on port 1234 (PID: $CODE_SERVER_PID)"
+    else
+        echo "[ray_node_setup] WARNING: Code server failed to start. Check $TMPDIR/code_server_$(hostname)_${SLURM_JOB_ID}.log"
+    fi
+fi
+
 echo "Starting Ray worker node $SLURM_NODEID on $(hostname)"
 export RAY_ADDRESS="${HEAD_IP}:${RAY_NODE_PORT}"
 # Start worker without --block so we can control lifecycle and exit code.
@@ -31,6 +47,10 @@ ray start --address="${RAY_ADDRESS}" --node-ip-address="$WORKER_IP" \
 
 cleanup() {
     echo "[ray_node_setup] Cleanup: stopping Ray worker and exiting 0"
+    if [ -n "$CODE_SERVER_PID" ]; then
+        echo "[ray_node_setup] Stopping code server (PID: $CODE_SERVER_PID)..."
+        kill $CODE_SERVER_PID 2>/dev/null; wait $CODE_SERVER_PID 2>/dev/null || true
+    fi
     ray stop --force >/dev/null 2>&1 || true
     trap - TERM INT HUP EXIT
     exit 0

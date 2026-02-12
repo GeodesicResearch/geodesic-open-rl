@@ -3,10 +3,11 @@
 # Launches a Ray cluster across SLURM nodes, then runs grpo_fast.py on head.
 #
 # Usage:
-#   sbatch configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_7b_rlzero_general.sh
+#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_general.yaml
+#   sbatch --nodes=10 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_code.yaml
 #   sbatch --nodes=1 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_debug_single_node.sh
 #
-# The training config script ($1) must set TRAINING_ARGS.
+# Accepts both YAML configs (.yaml, preferred) and shell configs (.sh, must set TRAINING_ARGS).
 
 #SBATCH --job-name=grpo-rlzero
 #SBATCH --nodes=10
@@ -18,7 +19,7 @@
 
 set -euo pipefail
 
-TRAINING_CONFIG=${1:?Usage: sbatch grpo_rlzero.sbatch <config.sh>}
+TRAINING_CONFIG=${1:?Usage: sbatch grpo_rlzero.sbatch <config.sh|config.yaml>}
 
 # Hardcoded to avoid BASH_SOURCE spool directory bug in SLURM
 REPO_DIR="/home/a5k/${USER}/open-instruct"
@@ -78,8 +79,9 @@ export HEAD_IP=$(getent hosts "$HEAD_HOSTNAME" | awk '{print $1; exit}')
 export MASTER_ADDR="$HEAD_IP"
 export MASTER_PORT=$((29500 + SLURM_JOB_ID % 1000))
 
-# --- HuggingFace offline mode ---
+# --- HuggingFace ---
 export HF_HUB_OFFLINE=1
+export HF_HUB_CACHE="/projects/a5k/public/hf_${USER}/hub"
 
 # --- vLLM / Ray env vars (from mason.py DEFAULT_ENV_VARS + ray_node_setup.sh) ---
 export NCCL_CUMEM_ENABLE=0
@@ -103,6 +105,35 @@ mkdir -p "$RAY_TMPDIR"
 
 # --- Unbuffered Python output so logs appear in real time ---
 export PYTHONUNBUFFERED=1
+
+# --- Load training config (early, for env vars and feature detection) ---
+# Shell configs: source to get TRAINING_ARGS and env vars (e.g. START_CODE_SERVER, MAX_JOB_CHAINS).
+# YAML configs: auto-detect features by grepping for known keys.
+if [[ "$TRAINING_CONFIG" == *.sh ]]; then
+    source "$TRAINING_CONFIG"
+elif [[ "$TRAINING_CONFIG" == *.yaml ]]; then
+    if grep -q "code_pass_rate_reward_threshold" "$TRAINING_CONFIG"; then
+        export START_CODE_SERVER=1
+    fi
+fi
+
+# --- Start code execution server (for code reward verification) ---
+# Auto-enabled for YAML configs containing code_pass_rate_reward_threshold,
+# or manually via START_CODE_SERVER=1 in shell configs.
+CODE_SERVER_PID=""
+if [ "${START_CODE_SERVER:-0}" = "1" ]; then
+    echo "Starting code execution server on head node..."
+    uvicorn open_instruct.code_utils.api:app \
+        --host 0.0.0.0 --port 1234 --workers 16 \
+        > "$TMPDIR/code_server_${SLURM_JOB_ID}.log" 2>&1 &
+    CODE_SERVER_PID=$!
+    sleep 2
+    if curl -s http://localhost:1234/health > /dev/null 2>&1; then
+        echo "Code server running on port 1234 (PID: $CODE_SERVER_PID)"
+    else
+        echo "WARNING: Code server failed to start. Check $TMPDIR/code_server_${SLURM_JOB_ID}.log"
+    fi
+fi
 
 # --- Log PyTorch / CUDA info ---
 echo "===== PyTorch & CUDA info ====="
@@ -186,18 +217,24 @@ echo "===== Ray Cluster Status ====="
 ray status || echo "Warning: ray status failed (cluster may still be initializing)"
 echo "==============================="
 
-# --- Source the training config (sets TRAINING_ARGS) ---
-source "$TRAINING_CONFIG"
-
 # --- Run training on head node ---
 echo "Launching grpo_fast.py..."
-LD_PRELOAD="$NCCL_LIBRARY" python open_instruct/grpo_fast.py $TRAINING_ARGS 2>&1
+if [[ "$TRAINING_CONFIG" == *.yaml ]]; then
+    LD_PRELOAD="$NCCL_LIBRARY" python open_instruct/grpo_fast.py "$TRAINING_CONFIG" 2>&1
+else
+    # Shell config was already sourced above; TRAINING_ARGS is set.
+    LD_PRELOAD="$NCCL_LIBRARY" python open_instruct/grpo_fast.py $TRAINING_ARGS 2>&1
+fi
 TRAIN_EXIT=$?
 
 echo "Training exited with code: $TRAIN_EXIT"
 
-# --- Cleanup Ray ---
-echo "Cleaning up Ray cluster..."
+# --- Cleanup ---
+echo "Cleaning up..."
+if [ -n "$CODE_SERVER_PID" ]; then
+    echo "Stopping code server (PID: $CODE_SERVER_PID)..."
+    kill $CODE_SERVER_PID 2>/dev/null; wait $CODE_SERVER_PID 2>/dev/null || true
+fi
 if [ -n "$SRUN_PID" ]; then
     kill $SRUN_PID 2>/dev/null; wait $SRUN_PID 2>/dev/null || true
 fi

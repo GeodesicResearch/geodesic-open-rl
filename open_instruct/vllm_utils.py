@@ -1035,22 +1035,38 @@ async def process_request(actor: LLMRayActor, sub_request_id: str, sampling_para
 
 
 def get_cuda_arch_list() -> str:
-    """Get CUDA compute capabilities and format them for TORCH_CUDA_ARCH_LIST."""
-    if not torch.cuda.is_available():
+    """Get CUDA compute capabilities and format them for TORCH_CUDA_ARCH_LIST.
+
+    Prefers the TORCH_CUDA_ARCH_LIST environment variable if set, falling back
+    to runtime detection. This avoids CUDA init failures on nodes where the
+    driver version is incompatible with PyTorch's bundled CUDA runtime.
+    """
+    env_arch = os.environ.get("TORCH_CUDA_ARCH_LIST", "")
+    if env_arch:
+        # Normalize: env var uses "9.0 8.0" or "9.0;8.0" format
+        cuda_arch_list = env_arch.replace(" ", ";")
+        logger.info(f"Using TORCH_CUDA_ARCH_LIST from environment: {cuda_arch_list}")
+        return cuda_arch_list
+
+    try:
+        if not torch.cuda.is_available():
+            return ""
+
+        cuda_capabilities = []
+        for i in range(torch.cuda.device_count()):
+            major, minor = torch.cuda.get_device_capability(i)
+            cuda_capabilities.append(f"{major}.{minor}")
+
+        # Remove duplicates and sort
+        cuda_capabilities = sorted(set(cuda_capabilities))
+        cuda_arch_list = ";".join(cuda_capabilities)
+        logger.info(
+            f"Detected CUDA compute capabilities: {cuda_capabilities}, setting TORCH_CUDA_ARCH_LIST={cuda_arch_list}"
+        )
+        return cuda_arch_list
+    except RuntimeError:
+        logger.warning("CUDA init failed in get_cuda_arch_list, returning empty string")
         return ""
-
-    cuda_capabilities = []
-    for i in range(torch.cuda.device_count()):
-        major, minor = torch.cuda.get_device_capability(i)
-        cuda_capabilities.append(f"{major}.{minor}")
-
-    # Remove duplicates and sort
-    cuda_capabilities = sorted(set(cuda_capabilities))
-    cuda_arch_list = ";".join(cuda_capabilities)
-    logger.info(
-        f"Detected CUDA compute capabilities: {cuda_capabilities}, setting TORCH_CUDA_ARCH_LIST={cuda_arch_list}"
-    )
-    return cuda_arch_list
 
 
 def create_vllm_engines(

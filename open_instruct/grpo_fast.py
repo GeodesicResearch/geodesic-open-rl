@@ -2234,9 +2234,7 @@ if __name__ == "__main__":
             ToolsConfig,
         )
     )
-    args, tokenizer_config, model_config, streaming_config, vllm_config, tools_config = (
-        parser.parse_args_into_dataclasses()
-    )
+    args, tokenizer_config, model_config, streaming_config, vllm_config, tools_config = parser.parse()
     assert isinstance(args, grpo_utils.ExperimentConfig)
     assert isinstance(tokenizer_config, TokenizerConfig)
     assert isinstance(model_config, ModelConfig)

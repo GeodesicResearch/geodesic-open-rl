@@ -1800,6 +1800,16 @@ FLOP_PER_MAC = 2
 SOFTMAX_FLOPS_PER_SCORE = 4
 
 
+def _safe_get_device_name() -> str | None:
+    """Get normalized GPU device name, returning None if CUDA init fails."""
+    try:
+        if torch.cuda.is_available():
+            return get_device_name(torch.cuda.get_device_name(0))
+    except RuntimeError:
+        pass
+    return None
+
+
 @dataclasses.dataclass
 class ModelDims:
     num_layers: int
@@ -1820,8 +1830,8 @@ class ModelDims:
 
         self.num_params = self.num_params or self._calculate_num_params()
 
-        if self.device_name is None and torch.cuda.is_available():
-            self.device_name = get_device_name(torch.cuda.get_device_name(0))
+        if self.device_name is None:
+            self.device_name = _safe_get_device_name()
 
         assert self.hidden_size % self.num_attn_heads == 0, "hidden_size must be divisible by num_attn_heads"
         assert self.num_attn_heads % self.num_kv_heads == 0, (
@@ -1872,7 +1882,7 @@ class ModelDims:
             head_dim=head_dim,
             sliding_window=sliding_window,
             num_sliding_window_layers=num_sliding_window_layers,
-            device_name=get_device_name(torch.cuda.get_device_name(0)) if torch.cuda.is_available() else None,
+            device_name=_safe_get_device_name(),
         )
 
     @property
