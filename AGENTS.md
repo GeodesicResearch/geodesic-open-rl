@@ -35,9 +35,14 @@ uv run pytest tests/test_X  # single test (preferred during dev)
 Training runs are configured via two layers:
 
 1. **SBATCH script** (`configs/isambard/grpo_rlzero.sbatch`) — SLURM settings, Ray cluster setup, env vars
-2. **Training config** (`configs/isambard/grpo_*.sh`) — model, dataset, hyperparams, passed as args to `grpo_fast.py`
+2. **Training config** (`.yaml` preferred, `.sh` for debug) — model, dataset, hyperparams, passed to `grpo_fast.py`
 
-The sbatch script sources the training config and launches `open_instruct/grpo_fast.py`.
+Available configs:
+- `grpo_olmo3_7b_general.yaml` — general RL-Zero (math/reasoning mix)
+- `grpo_olmo3_7b_code.yaml` — code RL-Zero (auto-starts code execution server)
+- `grpo_debug_single_node.sh` — minimal pipeline validation
+
+The sbatch script loads configs early: YAML configs are passed directly to `grpo_fast.py`; shell configs are sourced to set `TRAINING_ARGS` and env vars.
 
 ## Architecture (Ray + DeepSpeed + vLLM + Gloo)
 
@@ -48,6 +53,17 @@ Each node runs:
 Ray orchestrates actors across nodes. Weight sync uses a Gloo process group ("openrlhf") to broadcast updated weights from rank-0 learner to all vLLM engines.
 
 See `docs/architecture.md` for the full educational guide.
+
+### Code Execution Rewards
+
+For code RL-Zero, a local FastAPI server (`open_instruct/code_utils/api.py`) runs on every node to execute model-generated code against test cases. The `CodeVerifier` in `ground_truth_utils.py` POSTs to `localhost:1234/test_program`.
+
+- **Auto-detected**: The sbatch script greps YAML configs for `code_pass_rate_reward_threshold` and starts uvicorn automatically
+- **Manual**: Shell configs set `export START_CODE_SERVER=1`
+- **Worker nodes**: `ray_node_setup_slurm.sh` inherits `START_CODE_SERVER` via `srun --export=ALL`
+- **Logs**: `$TMPDIR/code_server_<jobid>.log` (head) and `$TMPDIR/code_server_<hostname>_<jobid>.log` (workers)
+
+See `docs/code_execution.md` for details.
 
 ## Isambard GH200 Gotchas
 
@@ -77,3 +93,5 @@ See `docs/architecture.md` for the full educational guide.
 | `open_instruct/data_loader.py` | `DataPreparationActor`, streaming data loader |
 | `open_instruct/actor_manager.py` | Ray actor lifecycle management |
 | `open_instruct/rl_utils.py` | RL utilities (rewards, advantage computation) |
+| `open_instruct/ground_truth_utils.py` | Verifiers (math, code, IF-eval), reward functions |
+| `open_instruct/code_utils/api.py` | FastAPI code execution server (uvicorn on port 1234) |
