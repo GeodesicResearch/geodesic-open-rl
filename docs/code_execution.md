@@ -127,11 +127,19 @@ curl -X POST http://localhost:1234/test_program_stdio \
 
 ## Dataset
 
-The code training config uses `allenai/Dolci-RLZero-Code-7B`, which contains coding problems with test cases. It must be pre-cached since `HF_HUB_OFFLINE=1` is set during training:
+The code training config uses `allenai/Dolci-RLZero-Code-7B`, which contains coding problems with test cases. This dataset is already cached at `/projects/a5k/public/hf_puria.a5k/hub`.
+
+### Using a different code dataset
+
+Any dataset can be used for code RL-Zero as long as:
+
+1. **Label field contains test cases** — either a list of assert strings (e.g. `["assert add(1,2) == 3"]`) or a JSON string representation of a list. The `CodeVerifier` passes these directly to the code server.
+2. **Chat template prompts for code blocks** — the verifier extracts Python from the last ` ```python ... ``` ` block in the model output. Use a template like `olmo_thinker_code_rlzero` that instructs the model to wrap its solution in these markers.
+3. **Dataset is pre-cached** — since `HF_HUB_OFFLINE=1` is set during training, download before submitting:
 
 ```bash
-source .env  # for HF_TOKEN (dataset is gated)
-huggingface-cli download allenai/Dolci-RLZero-Code-7B \
+source .env  # for HF_TOKEN (if dataset is gated)
+huggingface-cli download <dataset_name> \
   --repo-type dataset \
   --cache-dir /projects/a5k/public/hf_${USER}/hub
 ```
