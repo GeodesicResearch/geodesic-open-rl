@@ -110,7 +110,8 @@ class ExperimentConfig:
     """number of GPU deepspeed learners per node (e.g., --num_learners_per_node 2 4 means 2 learner processes
     on the first node and 4 learner processes on the second node; each process will have 1 GPU)"""
     num_nodes: int = 1
-    """Number of nodes for distributed training."""
+    """Number of nodes for distributed training. UNUSED — kept for CLI arg compatibility with upstream scripts.
+    Actual node count is derived from len(num_learners_per_node) after auto-expansion."""
     sequence_parallel_size: int = 1
     """sequence parallel size - how many GPUs we will parallelize sequences across during training.
     Useful for super-long context lengths."""

@@ -1490,6 +1490,19 @@ def rlvr_max_length_filter_v2(
     return len(row[INPUT_IDS_PROMPT_KEY]) <= max_prompt_token_length
 
 
+def dolci_code_preprocess_v1(row: dict[str, Any], tokenizer: PreTrainedTokenizer) -> dict[str, Any]:
+    """Preprocess Dolci-RLZero-Code dataset into standard RLVR schema.
+
+    Dolci has: id, solution, prompt (plain string), ground_truth
+    RLVR expects: messages (list of dicts), dataset (verifier name), ground_truth
+    """
+    prompt_text = row["prompt"]
+    content = prompt_text[len("user: ") :] if prompt_text.startswith("user: ") else prompt_text
+    row["messages"] = [{"role": "user", "content": content}]
+    row["dataset"] = "code"
+    return row
+
+
 TRANSFORM_FNS = {
     "sft_tokenize_v1": (sft_tokenize_v1, "map"),
     "sft_tokenize_mask_out_prompt_v1": (sft_tokenize_mask_out_prompt_v1, "map"),
@@ -1500,6 +1513,7 @@ TRANSFORM_FNS = {
     "preference_filter_v1": (preference_filter_v1, "filter"),
     "preference_tulu_tokenize_and_truncate_v1": (preference_tulu_tokenize_and_truncate_v1_2, "map"),
     "preference_tulu_filter_v1": (preference_tulu_filter_v1, "filter"),
+    "dolci_code_preprocess_v1": (dolci_code_preprocess_v1, "map"),
     "rlvr_tokenize_v1": (rlvr_tokenize_v3, "map"),
     "rlvr_max_length_filter_v1": (rlvr_max_length_filter_v2, "filter"),
 }

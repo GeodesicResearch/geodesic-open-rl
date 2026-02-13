@@ -85,9 +85,8 @@ class Batch:
 
     def __getitem__(self, key: slice | int | list[int]) -> "Batch":
         """Enable indexing and slicing: batch[5], batch[start:end], or batch[[1,3,5]]."""
-        active_tools = self.active_tools[key] if self.active_tools is not None else None
         if isinstance(key, slice):
-            # Handle slice object: batch[start:end]
+            active_tools = self.active_tools[key] if self.active_tools is not None else None
             return Batch(
                 queries=self.queries[key],
                 ground_truths=self.ground_truths[key],
@@ -99,7 +98,7 @@ class Batch:
                 active_tools=active_tools,
             )
         elif isinstance(key, int):
-            # Handle single index: batch[5]
+            active_tools = [self.active_tools[key]] if self.active_tools is not None else None
             return Batch(
                 queries=[self.queries[key]],
                 ground_truths=[self.ground_truths[key]],
@@ -112,6 +111,7 @@ class Batch:
             )
         else:
             # Handle list of indices: batch[[1,3,5]]
+            active_tools = [self.active_tools[i] for i in key] if self.active_tools is not None else None
             return Batch(
                 queries=[self.queries[i] for i in key],
                 ground_truths=[self.ground_truths[i] for i in key],

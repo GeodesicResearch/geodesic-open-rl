@@ -1041,6 +1041,19 @@ class DataPreparationActor:
 
             assert batch is not None
             assert batch_stats is not None
+
+            # Log the first rollout (prompt + completion + score) for each training step.
+            if batch.raw_queries and batch.decoded_responses:
+                prompt_preview = batch.raw_queries[0][:500]
+                response_preview = batch.decoded_responses[0][:1000]
+                score_preview = batch.scores[0] if batch.scores else "N/A"
+                logger.info(
+                    f"[DataPreparationActor] Step {step} — first rollout:\n"
+                    f"  PROMPT: {prompt_preview}\n"
+                    f"  RESPONSE: {response_preview}\n"
+                    f"  SCORE: {score_preview}"
+                )
+
             scores = np.array(batch.scores)
             scores_per_prompt = scores.reshape(-1, self.config.num_samples_per_prompt_rollout)
             mean_grouped_rewards = scores_per_prompt.mean(axis=-1)

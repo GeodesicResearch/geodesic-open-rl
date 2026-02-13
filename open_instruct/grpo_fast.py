@@ -1120,6 +1120,10 @@ def setup_datasets(
         },
         {"max_prompt_token_length": streaming_config.max_prompt_token_length},
     ]
+    # Pad for any extra preprocessing transforms added before the standard two.
+    # Extra transforms only need the tokenizer (always passed by get_dataset_v1).
+    while len(transform_fn_args) < len(streaming_config.dataset_transform_fn):
+        transform_fn_args.insert(0, {})
     train_dataset = get_cached_dataset_tulu(
         dataset_mixer_list=streaming_config.dataset_mixer_list,
         dataset_mixer_list_splits=streaming_config.dataset_mixer_list_splits,
@@ -2041,7 +2045,8 @@ def main(
 ):
     tokenizer = make_tokenizer(tc, model_config)
     args = setup_runtime_variables(args, streaming_config, tools_config)
-    validate_configs(streaming_config, vllm_config, tuple(args.num_learners_per_node), args.sequence_parallel_size)
+    # validate_configs is called after ray.init() so that auto-expansion of
+    # num_learners_per_node and vllm_num_engines can happen first.
 
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
@@ -2063,6 +2068,32 @@ def main(
         if (k.startswith(_RAY_ENV_PREFIXES) or k in _RAY_ENV_EXTRAS) and k != "CUDA_VISIBLE_DEVICES"
     }
     ray.init(dashboard_host="0.0.0.0", runtime_env={"excludes": [".git/", ".venv/"], "env_vars": _ray_env_vars})
+
+    # Auto-expand num_learners_per_node if only 1 element given.
+    # e.g. [1] on a 4-node Ray cluster -> [1, 1, 1, 1]
+    if len(args.num_learners_per_node) == 1:
+        num_ray_nodes = len(ray.nodes())
+        if num_ray_nodes > 1:
+            learners = args.num_learners_per_node[0]
+            args.num_learners_per_node = [learners] * num_ray_nodes
+            logger.info(
+                f"Auto-expanded num_learners_per_node to {args.num_learners_per_node} "
+                f"({num_ray_nodes} Ray nodes detected)"
+            )
+    args.world_size = sum(args.num_learners_per_node)
+
+    # Auto-compute vllm_num_engines from remaining GPUs.
+    total_gpus = int(ray.cluster_resources().get("GPU", 0))
+    learner_gpus = sum(args.num_learners_per_node)
+    available_vllm_gpus = total_gpus - learner_gpus
+    if available_vllm_gpus > 0 and vllm_config.vllm_num_engines != available_vllm_gpus:
+        logger.info(
+            f"Auto-setting vllm_num_engines={available_vllm_gpus} "
+            f"({total_gpus} total GPUs - {learner_gpus} learner GPUs)"
+        )
+        vllm_config.vllm_num_engines = available_vllm_gpus
+
+    validate_configs(streaming_config, vllm_config, tuple(args.num_learners_per_node), args.sequence_parallel_size)
 
     tool_actors, tool_definitions, tool_stop_sequences, tool_call_names = initialize_tools(tools_config, tokenizer)
     logger.info(

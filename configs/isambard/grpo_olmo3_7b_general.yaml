@@ -42,6 +42,7 @@ output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/grpo_olmo3_7b_gene
 # --- ModelConfig ---
 model_name_or_path: allenai/OLMo-3-1025-7B
 gradient_checkpointing: true
+attn_implementation: flash_attention_2
 
 # --- TokenizerConfig ---
 chat_template_name: olmo_thinker

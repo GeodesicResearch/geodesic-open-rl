@@ -810,8 +810,12 @@ class CodeVerifier(VerifierFunction):
         if not matches:
             return model_output
 
-        # Return the last match, stripped of whitespace
-        return matches[-1].strip()
+        # Strip whitespace, then remove a leading "python" language tag that
+        # may appear on its own line (e.g. "```\npython\nCODE\n```").
+        code = matches[-1].strip()
+        if code.startswith("python\n"):
+            code = code[len("python\n"):]
+        return code.strip()
 
     # Create a session pool for better performance
     _session_pool = None
