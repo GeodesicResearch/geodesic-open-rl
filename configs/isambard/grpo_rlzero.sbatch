@@ -45,13 +45,18 @@ module load brics/aws-ofi-nccl/1.8.1
 
 # --- NCCL from venv ---
 # System NCCL 2.26.6 is too old for PyTorch 2.9.1 (missing ncclCommWindowRegister).
-# PyTorch's bundled NCCL 2.27.5 misidentifies GH200 PCI bus IDs ("Duplicate GPU" error),
-# so we cannot use multi-rank NCCL process groups on a single node.
-# Workaround: use 1 learner per node (no intra-node NCCL needed).
+# We use the venv's bundled NCCL 2.27.5 via LD_PRELOAD for the training process.
 VENV_SP="$REPO_DIR/.venv/lib/python3.12/site-packages"
 export NCCL_LIBRARY="$VENV_SP/nvidia/nccl/lib/libnccl.so.2"
-# NOTE: Do NOT export LD_PRELOAD globally — Ray workers inherit it and it causes issues.
-# Apply per-command only (see python invocations below).
+
+# --- NCCL duplicate GPU fix for GH200 ---
+# The CUDA runtime misreports identical PCI bus IDs for all GH200 GPUs, causing
+# NCCL's "Duplicate GPU detected" error with multi-rank on one node.
+# Fix: patched NCCL 2.27.5 (built via scripts/build_patched_nccl.sh) gates the
+# duplicate check behind this env var. The GPUs ARE distinct — only the bus ID
+# reporting is wrong.
+export NCCL_IGNORE_DUPLICATE_GPU=1
+# NCCL_LIBRARY is preloaded per-command (training process only, not Ray workers).
 
 # --- Compilers and CUDA arch ---
 export CC=/usr/bin/gcc-12
@@ -152,6 +157,15 @@ if torch.cuda.is_available():
         print(f"  GPU[{i}]: {name}  (SM {cap[0]}.{cap[1]})")
 PY
 echo "================================"
+
+# --- Verify patched NCCL ---
+LD_PRELOAD="$NCCL_LIBRARY" python -c "
+import ctypes, os
+nccl = ctypes.CDLL(os.environ['NCCL_LIBRARY'])
+# If the patched NCCL loads, we're good. The env var gate is checked at runtime.
+print('NCCL library loaded successfully')
+print(f'NCCL_IGNORE_DUPLICATE_GPU={os.getenv(\"NCCL_IGNORE_DUPLICATE_GPU\", \"(not set)\")}')
+" 2>&1 || echo "WARNING: Could not verify patched NCCL"
 
 # --- Job Chain Info ---
 MAX_JOB_CHAINS=${MAX_JOB_CHAINS:-30}

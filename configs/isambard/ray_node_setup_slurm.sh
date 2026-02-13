@@ -7,7 +7,9 @@
 #   srun --exclude=$HEAD_NODE bash configs/isambard/ray_node_setup_slurm.sh
 
 export PYTHONPATH="${REPO_DIR:-/home/a5k/${USER}/open-instruct}"
-unset LD_PRELOAD  # Ray workers must not preload NCCL
+# Don't preload NCCL library on workers — only needed for the training process.
+# Ray workers must not have LD_PRELOAD set (it breaks non-CUDA processes).
+unset LD_PRELOAD
 
 # We need to set NCCL_CUMEM_ENABLE=0 for performance reasons; see:
 # https://github.com/vllm-project/vllm/issues/5723#issuecomment-2554389656

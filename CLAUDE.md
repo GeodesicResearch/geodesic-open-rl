@@ -47,8 +47,8 @@ The sbatch script loads configs early: YAML configs are passed directly to `grpo
 ## Architecture (Ray + DeepSpeed + vLLM + Gloo)
 
 Each node runs:
-- **1 learner** (DeepSpeed) — forward/backward/optimizer on policy model
-- **3 vLLM engines** — fast rollout generation
+- **2 learners** (DeepSpeed ZeRO-3) — forward/backward/optimizer on policy model
+- **2 vLLM engines** — fast rollout generation
 
 Ray orchestrates actors across nodes. Weight sync uses a Gloo process group ("openrlhf") to broadcast updated weights from rank-0 learner to all vLLM engines.
 
@@ -73,8 +73,8 @@ See `docs/code_execution.md` for details.
 | Multi-NIC IP non-determinism | `--node-ip-address` on head and workers |
 | NFS can't handle Ray Unix sockets | `--temp-dir=/tmp/ray_${USER}_${SLURM_JOB_ID}` |
 | SLURM env vars too large for Ray | Filter `env_vars` to needed prefixes only (`grpo_fast.py:2057-2063`) |
-| NCCL "Duplicate GPU" on GH200 | 1 learner per node (no intra-node multi-rank NCCL) |
-| `LD_PRELOAD` poisoning | Per-command prefix only, never global export in Ray scripts |
+| NCCL "Duplicate GPU" on GH200 | Patched NCCL 2.27.5 (`scripts/build_patched_nccl.sh`) + `NCCL_IGNORE_DUPLICATE_GPU=1` |
+| `LD_PRELOAD` for NCCL library | Per-command prefix for training only (`LD_PRELOAD="$NCCL_LIBRARY"`) |
 | `RAY_ADDRESS` not set | Export after `ray start --head` so `ray.init()` connects to cluster |
 
 ## Coding Conventions

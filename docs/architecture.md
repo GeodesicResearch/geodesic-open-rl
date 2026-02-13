@@ -14,13 +14,13 @@ The system trains a language model using RL with Verifiable Rewards (RLVR). Inst
 │  Node 0                                    Node 1                         │
 │  ┌─────────────────────────────┐           ┌─────────────────────────────┐│
 │  │ GPU 0: PolicyTrainer (DS)   │           │ GPU 0: PolicyTrainer (DS)   ││
+│  │ GPU 1: PolicyTrainer (DS)   │           │ GPU 1: PolicyTrainer (DS)   ││
 │  │   - Forward/backward pass   │           │   - Forward/backward pass   ││
-│  │   - Gradient sync (DS)      │◄─────────►│   - Gradient sync (DS)      ││
+│  │   - ZeRO-3 gradient sync   │◄─────────►│   - ZeRO-3 gradient sync   ││
 │  │   - Weight broadcast (Gloo) │           │                             ││
 │  │                             │           │                             ││
-│  │ GPU 1: vLLM Engine 0       │           │ GPU 1: vLLM Engine 0       ││
-│  │ GPU 2: vLLM Engine 1       │           │ GPU 2: vLLM Engine 1       ││
-│  │ GPU 3: vLLM Engine 2       │           │ GPU 3: vLLM Engine 2       ││
+│  │ GPU 2: vLLM Engine 0       │           │ GPU 2: vLLM Engine 0       ││
+│  │ GPU 3: vLLM Engine 1       │           │ GPU 3: vLLM Engine 1       ││
 │  │   - Rollout generation     │           │   - Rollout generation     ││
 │  │   - Receive weight updates │           │   - Receive weight updates ││
 │  └─────────────────────────────┘           └─────────────────────────────┘│
@@ -49,12 +49,12 @@ Key concept: Every GPU-bound process is a Ray actor. The main thread on the head
 ### DeepSpeed — Training
 
 DeepSpeed wraps the policy model for distributed training:
-- **ZeRO Stage 0** (our config): No parameter/gradient sharding — each learner has full model
+- **ZeRO Stage 3** (our config): Full parameter, gradient, and optimizer state sharding across all learners
 - **Gradient synchronization**: When multiple learners exist across nodes, DeepSpeed syncs gradients via NCCL
 - **Mixed precision**: bf16 forward/backward with fp32 optimizer states
 - **Optimizer**: AdamW with configurable LR schedule
 
-We use Stage 0 because with 1 learner per node (GH200 NCCL workaround), there's no intra-node sharding benefit.
+We use Stage 3 with 2 learners per node (4-way sharding across 2 nodes) to fit large models like OLMo3-7B within GH200's 95 GiB GPU memory. This requires a patched NCCL (see below).
 
 ### vLLM — Inference
 
@@ -86,16 +86,18 @@ The layout is configured by three parameters:
 ### Example: 2 nodes × 4 GPUs
 
 ```
-num_learners_per_node = [1, 1]   # 1 learner on each of 2 nodes
-vllm_num_engines = 6             # 3 per node (4 GPUs - 1 learner = 3 vLLM)
+num_learners_per_node = [2, 2]   # 2 learners on each of 2 nodes
+vllm_num_engines = 4             # 2 per node (4 GPUs - 2 learners = 2 vLLM)
 ```
 
 | Node | GPU 0 | GPU 1 | GPU 2 | GPU 3 |
 |------|-------|-------|-------|-------|
-| 0 | Learner (rank 0) | vLLM 0 | vLLM 1 | vLLM 2 |
-| 1 | Learner (rank 1) | vLLM 3 | vLLM 4 | vLLM 5 |
+| 0 | Learner (rank 0) | Learner (rank 1) | vLLM 0 | vLLM 1 |
+| 1 | Learner (rank 2) | Learner (rank 3) | vLLM 2 | vLLM 3 |
 
-Total: 2 learners (DeepSpeed world_size=2) + 6 vLLM engines = 8 GPUs.
+Total: 4 learners (DeepSpeed world_size=4, ZeRO-3 4-way sharding) + 4 vLLM engines = 8 GPUs.
+
+Requires patched NCCL with `NCCL_IGNORE_DUPLICATE_GPU=1` for intra-node multi-rank communication (see GH200 NCCL Workaround below).
 
 ## 4. Training Loop
 
@@ -280,9 +282,9 @@ On resume, the training script:
 
 ### GH200 NCCL Workaround
 
-**Problem:** PyTorch's bundled NCCL 2.27.5 reads GH200 GPU PCI bus IDs incorrectly — all GPUs on a node report the same `busId`. When multiple learners on one node try to create an NCCL process group, NCCL detects "duplicate GPUs" and crashes.
+**Problem:** PyTorch's bundled NCCL 2.27.5 reads GH200 GPU PCI bus IDs incorrectly — all GPUs on a node report the same `busId` from `cudaDeviceGetPCIBusId()`. When multiple learners on one node try to create an NCCL process group, NCCL detects "duplicate GPUs" and crashes.
 
-**Fix:** Use 1 learner per node (`num_learners_per_node = [1]`). The single learner doesn't need intra-node NCCL. For multi-node, inter-node NCCL works fine (different physical bus IDs across nodes).
+**Fix:** Patched NCCL 2.27.5 built from source (`scripts/build_patched_nccl.sh`) gates the duplicate GPU check behind `NCCL_IGNORE_DUPLICATE_GPU=1`. When set, NCCL logs the duplicate instead of aborting. The patched library replaces the pip-installed NCCL in the venv. This allows multiple learners per node for ZeRO-3 sharding, which is needed to fit large models (e.g., OLMo3-7B) in GH200 GPU memory.
 
 ### Ray CPU Cap
 
