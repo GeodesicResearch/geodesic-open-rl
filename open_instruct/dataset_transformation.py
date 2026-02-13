@@ -529,13 +529,13 @@ CHAT_TEMPLATES = {
     ),
     "olmo_thinker_code_rlzero": (
         "Solve the following code problem step by step. "
-        "The last part of your response should be the solution to the problem in form ```\npython\nCODE\n``` where CODE is the solution for the problem."
+        "The last part of your response should be the solution to the problem in form ```python\nCODE\n``` where CODE is the solution for the problem."
         "\n\n"
         "{% for message in messages %}"
         "{{ '\n\n' if not loop.first else '' }}"
         "{{ message['content'] + '\n' }}"
         "{% if loop.last and add_generation_prompt %}"
-        "\nRemember to put your solution inside the ```\npython\nCODE\n``` tags"
+        "\nRemember to put your solution inside the ```python\nCODE\n``` tags"
         "{% endif %}"
         "{% endfor %}"
     ),
