@@ -1,24 +1,22 @@
-# OLMo3-7B GRPO RL-Zero (code) on Isambard GH200.
-# Adapted from scripts/train/olmo3/7b_rlzero_code.sh with GH200-specific corrections.
-#
-# Requires code execution server — the sbatch script auto-detects this from
-# code_pass_rate_reward_threshold and starts uvicorn on every node at localhost:1234.
+# OLMo3-7B GRPO RL-Zero (code, DEBUG) on Isambard GH200.
+# Uses a trivially simple debug dataset (geodesic-research/debug-code-rlzero)
+# so the base model can actually produce non-zero rewards from the start.
+# Shorter response_length (2048) to avoid OOM on the learner GPU.
 #
 # Usage:
-#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_code.yaml
-#   sbatch --nodes=10 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_code.yaml
+#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_code_debug.yaml
 #
 # GPU topology (per node): 1 learner (DeepSpeed ZeRO-3) + 3 vLLM engines = 4 GPUs
 # NCCL workaround: num_learners_per_node=1 (GH200 "Duplicate GPU" bug with multi-rank NCCL)
 
 # --- ExperimentConfig ---
-exp_name: grpo_olmo3_7b_code_rlzero
+exp_name: grpo_olmo3_7b_code_debug
 beta: 0.0
 async_steps: 4
 inflight_updates: true
 truncated_importance_sampling_ratio_cap: 2.0
 num_samples_per_prompt_rollout: 8
-num_unique_prompts_rollout: 8  # DEBUG: reduced from 32 for faster iteration. Restore to 32 for real training.
+num_unique_prompts_rollout: 8
 num_mini_batches: 1
 num_epochs: 1
 learning_rate: 1.0e-6
@@ -33,13 +31,13 @@ seed: 1
 local_eval_every: 50
 save_freq: 50
 checkpoint_state_freq: 50
-checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/grpo_olmo3_7b_code_rlzero
+checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/grpo_olmo3_7b_code_debug
 lr_scheduler_type: constant
 clip_higher: 0.272
 keep_last_n_checkpoints: -1
 with_tracking: true
 push_to_hub: false
-output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/grpo_olmo3_7b_code_rlzero/checkpoints
+output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/grpo_olmo3_7b_code_debug/checkpoints
 
 # --- ModelConfig ---
 model_name_or_path: allenai/OLMo-3-1025-7B
@@ -55,21 +53,21 @@ dataset_transform_fn:
   - rlvr_tokenize_v1
   - rlvr_max_length_filter_v1
 dataset_mixer_list:
-  - allenai/Dolci-RLZero-Code-7B
+  - geodesic-research/debug-code-rlzero
   - "1.0"
 dataset_mixer_list_splits:
   - train
 dataset_mixer_eval_list:
-  - allenai/Dolci-RLZero-Code-7B
+  - geodesic-research/debug-code-rlzero
   - "8"
 dataset_mixer_eval_list_splits:
   - train
 max_prompt_token_length: 2048
-response_length: 16384
-pack_length: 18432
+response_length: 2048
+pack_length: 4096
 non_stop_penalty: false
 mask_truncated_completions: true
-filter_zero_std_samples: false  # DEBUG: disabled so cold-start batches aren't silently dropped. Re-enable for real training.
+filter_zero_std_samples: false
 apply_verifiable_reward: true
 code_pass_rate_reward_threshold: 0.0
 

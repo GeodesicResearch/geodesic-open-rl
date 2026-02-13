@@ -814,7 +814,7 @@ class CodeVerifier(VerifierFunction):
         # may appear on its own line (e.g. "```\npython\nCODE\n```").
         code = matches[-1].strip()
         if code.startswith("python\n"):
-            code = code[len("python\n"):]
+            code = code[len("python\n") :]
         return code.strip()
 
     # Create a session pool for better performance
