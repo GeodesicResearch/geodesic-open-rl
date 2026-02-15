@@ -1047,9 +1047,12 @@ class DataPreparationActor:
                 prompt_preview = batch.raw_queries[0][:500]
                 response_preview = batch.decoded_responses[0][:1000]
                 score_preview = batch.scores[0] if batch.scores else "N/A"
+                # Decode the actual token IDs to show the verbatim context sent to the model.
+                verbatim_prompt = self.tokenizer.decode(batch.queries[0], skip_special_tokens=False)[:2000]
                 logger.info(
                     f"[DataPreparationActor] Step {step} — first rollout:\n"
-                    f"  PROMPT: {prompt_preview}\n"
+                    f"  PROMPT (raw): {prompt_preview}\n"
+                    f"  PROMPT (verbatim tokens): {verbatim_prompt}\n"
                     f"  RESPONSE: {response_preview}\n"
                     f"  SCORE: {score_preview}"
                 )
