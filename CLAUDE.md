@@ -35,20 +35,21 @@ uv run pytest tests/test_X  # single test (preferred during dev)
 Training runs are configured via two layers:
 
 1. **SBATCH script** (`configs/isambard/grpo_rlzero.sbatch`) — SLURM settings, Ray cluster setup, env vars
-2. **Training config** (`.yaml` preferred, `.sh` for debug) — model, dataset, hyperparams, passed to `grpo_fast.py`
+2. **Training config** (`.yaml`) — model, dataset, hyperparams, passed to `grpo_fast.py`
 
 Available configs:
 - `grpo_olmo3_7b_general.yaml` — general RL-Zero (math/reasoning mix)
 - `grpo_olmo3_7b_code.yaml` — code RL-Zero (auto-starts code execution server)
-- `grpo_debug_single_node.sh` — minimal pipeline validation
+- `grpo_olmo3_7b_code_debug.yaml` — code RL-Zero debug (trivial dataset, shorter sequences)
+- `grpo_debug_single_node.yaml` — minimal pipeline validation (Qwen 0.5B, single node)
 
 The sbatch script loads configs early: YAML configs are passed directly to `grpo_fast.py`; shell configs are sourced to set `TRAINING_ARGS` and env vars.
 
 ## Architecture (Ray + DeepSpeed + vLLM + Gloo)
 
 Each node runs:
-- **2 learners** (DeepSpeed ZeRO-3) — forward/backward/optimizer on policy model
-- **2 vLLM engines** — fast rollout generation
+- **1 learner** (DeepSpeed ZeRO-3) — forward/backward/optimizer on policy model
+- **3 vLLM engines** — fast rollout generation
 
 Ray orchestrates actors across nodes. Weight sync uses a Gloo process group ("openrlhf") to broadcast updated weights from rank-0 learner to all vLLM engines.
 
@@ -73,8 +74,8 @@ See `docs/code_execution.md` for details.
 | Multi-NIC IP non-determinism | `--node-ip-address` on head and workers |
 | NFS can't handle Ray Unix sockets | `--temp-dir=/tmp/ray_${USER}_${SLURM_JOB_ID}` |
 | SLURM env vars too large for Ray | Filter `env_vars` to needed prefixes only (`grpo_fast.py:2057-2063`) |
-| NCCL "Duplicate GPU" on GH200 | Patched NCCL 2.27.5 (`scripts/build_patched_nccl.sh`) + `NCCL_IGNORE_DUPLICATE_GPU=1` |
-| `LD_PRELOAD` for NCCL library | Per-command prefix for training only (`LD_PRELOAD="$NCCL_LIBRARY"`) |
+| NCCL "Duplicate GPU" on GH200 | Use 1 learner per node (avoids multi-rank NCCL on same node) |
+| System NCCL too old | `LD_PRELOAD` venv NCCL 2.27.5 for training process only (`LD_PRELOAD="$NCCL_LIBRARY"`) |
 | `RAY_ADDRESS` not set | Export after `ray start --head` so `ray.init()` connects to cluster |
 
 ## Coding Conventions

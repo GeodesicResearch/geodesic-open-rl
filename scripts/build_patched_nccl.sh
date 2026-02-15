@@ -2,15 +2,17 @@
 # Build patched NCCL v2.27.5 for GH200 (Isambard).
 #
 # Problem: PyTorch 2.9.1's bundled NCCL 2.27.5 uses cudaDeviceGetPCIBusId() which
-# returns identical bus IDs for all GH200 GPUs. This causes "Duplicate GPU detected"
-# errors when multiple NCCL ranks run on the same node.
+# returns identical bus IDs for all GH200 GPUs (all report 0000:90:10.0). This causes
+# "Duplicate GPU detected" errors and topology failures when multiple NCCL ranks run
+# on the same node.
 #
-# Fix: Build NCCL from source with the duplicate GPU check gated behind
-# NCCL_IGNORE_DUPLICATE_GPU=1. When set, the check is skipped and a log message
-# is printed instead of aborting.
+# Fix: Patch getBusId() in src/misc/utils.cc to read correct bus IDs from
+# /proc/driver/nvidia/gpus/ (kernel driver) instead of the buggy CUDA runtime.
+# Enabled by NCCL_BUSID_PROC_FIX=1. This fixes the root cause: correct bus IDs
+# mean the duplicate check passes naturally and topology builds correctly.
 #
 # Usage:
-#   bash scripts/build_patched_nccl.sh          # build and install to venv
+#   bash scripts/build_patched_nccl.sh              # build and install to venv
 #   bash scripts/build_patched_nccl.sh --build-only  # build without installing
 #
 # Prerequisites:
@@ -41,84 +43,132 @@ fi
 echo "Cloning NCCL $NCCL_VERSION..."
 git clone -b "$NCCL_VERSION" --depth 1 https://github.com/NVIDIA/nccl.git "$BUILD_DIR"
 
-# --- Patch ---
-echo "Applying duplicate GPU check patch..."
-INIT_CC="$BUILD_DIR/src/init.cc"
+# --- Patch getBusId() in src/misc/utils.cc ---
+# Replace the getBusId() function with a version that reads from /proc/driver/nvidia/gpus/
+# when NCCL_BUSID_PROC_FIX=1 is set. This fixes the GH200 CUDA runtime bug where
+# cudaDeviceGetPCIBusId() returns identical bus IDs for all GPUs.
+echo "Applying getBusId() patch to src/misc/utils.cc..."
+UTILS_CC="$BUILD_DIR/src/misc/utils.cc"
 
-# Verify the target code exists before patching
-if ! grep -q "Duplicate GPU detected" "$INIT_CC"; then
-    echo "ERROR: Could not find 'Duplicate GPU detected' in $INIT_CC"
-    echo "The NCCL source may have changed. Manual patching required."
+if ! grep -q "getBusId" "$UTILS_CC"; then
+    echo "ERROR: Could not find getBusId in $UTILS_CC"
     exit 1
 fi
 
-# Use Python for reliable multi-line patching.
-# Replaces the WARN+fail block inside the duplicate GPU check with an env-var-gated version.
-python3 -c "
-import re, sys
+python3 - "$UTILS_CC" << 'PATCH_SCRIPT'
+import sys
 
-with open('$INIT_CC', 'r') as f:
+utils_cc = sys.argv[1]
+with open(utils_cc, 'r') as f:
     src = f.read()
 
-# Match the duplicate GPU check block:
-#   if ((i != rank) && ... busId == ... busId)) {
-#     WARN(\"Duplicate GPU detected ...\");
-#     ret = ncclInvalidUsage;
-#     goto fail;
-#   }
-pattern = re.compile(
-    r'([ \t]*if \(\(i != rank\) && \(comm->peerInfo\[i\]\.hostHash == comm->peerInfo\[rank\]\.hostHash\) &&\s*'
-    r'\(comm->peerInfo\[i\]\.busId == comm->peerInfo\[rank\]\.busId\)\) \{)\s*'
-    r'(WARN\(\"Duplicate GPU detected[^;]*;\s*'
-    r'ret = ncclInvalidUsage;\s*'
-    r'goto fail;)\s*'
-    r'(\})',
-    re.DOTALL
-)
+# The original getBusId function:
+old_func = '''// Convert a logical cudaDev index to the NVML device minor number
+ncclResult_t getBusId(int cudaDev, int64_t *busId) {
+  // On most systems, the PCI bus ID comes back as in the 0000:00:00.0
+  // format. Still need to allocate proper space in case PCI domain goes
+  // higher.
+  char busIdStr[] = "00000000:00:00.0";
+  CUDACHECK(cudaDeviceGetPCIBusId(busIdStr, sizeof(busIdStr), cudaDev));
+  NCCLCHECK(busIdToInt64(busIdStr, busId));
+  return ncclSuccess;
+}'''
 
-match = pattern.search(src)
-if not match:
-    print('ERROR: Could not match duplicate GPU check pattern in init.cc', file=sys.stderr)
+new_func = '''// Convert a logical cudaDev index to the NVML device minor number.
+//
+// GH200 fix: The CUDA runtime's cudaDeviceGetPCIBusId() returns identical
+// bus IDs for all GPUs on GH200 nodes (e.g. all report 0000:90:10.0).
+// When NCCL_BUSID_PROC_FIX=1, read correct bus IDs from
+// /proc/driver/nvidia/gpus/ (kernel driver) instead.
+#include <dirent.h>
+static int procBusIdsLoaded = 0;
+static char procBusIds[16][20];
+static int nProcGpus = 0;
+
+static int busIdCmp(const void *a, const void *b) { return strcmp((const char*)a, (const char*)b); }
+
+static void loadProcBusIds(void) {
+  if (procBusIdsLoaded) return;
+  procBusIdsLoaded = 1;
+  DIR *d = opendir("/proc/driver/nvidia/gpus");
+  if (!d) return;
+  struct dirent *e;
+  while ((e = readdir(d)) && nProcGpus < 16) {
+    if (e->d_name[0] != '.') {
+      strncpy(procBusIds[nProcGpus], e->d_name, 19);
+      procBusIds[nProcGpus][19] = '\\0';
+      nProcGpus++;
+    }
+  }
+  closedir(d);
+  // Sort by PCI address — CUDA enumerates GPUs in PCI bus order
+  qsort(procBusIds, nProcGpus, 20, busIdCmp);
+}
+
+ncclResult_t getBusId(int cudaDev, int64_t *busId) {
+  // On most systems, the PCI bus ID comes back as in the 0000:00:00.0
+  // format. Still need to allocate proper space in case PCI domain goes
+  // higher.
+  char busIdStr[] = "00000000:00:00.0";
+  CUDACHECK(cudaDeviceGetPCIBusId(busIdStr, sizeof(busIdStr), cudaDev));
+
+  // GH200 fix: override with correct bus ID from /proc
+  const char* fix = ncclGetEnv("NCCL_BUSID_PROC_FIX");
+  if (fix && strcmp(fix, "1") == 0) {
+    loadProcBusIds();
+    // Map CUDA device index to physical GPU. CUDA_VISIBLE_DEVICES remapping
+    // is already handled by the CUDA runtime (cudaDev is a logical index
+    // within the visible set), so we need the physical index.
+    // Parse CUDA_VISIBLE_DEVICES to find the physical GPU index.
+    int physDev = cudaDev;
+    const char* cvd = getenv("CUDA_VISIBLE_DEVICES");
+    if (cvd && cvd[0] >= '0' && cvd[0] <= '9') {
+      const char* p = cvd;
+      for (int i = 0; i < cudaDev && *p; p++) {
+        if (*p == ',') i++;
+      }
+      physDev = atoi(p);
+    }
+    if (physDev >= 0 && physDev < nProcGpus) {
+      INFO(NCCL_INIT, "getBusId: device %d (phys %d) overridden: %s -> %s (from /proc)",
+           cudaDev, physDev, busIdStr, procBusIds[physDev]);
+      strncpy(busIdStr, procBusIds[physDev], sizeof(busIdStr) - 1);
+      busIdStr[sizeof(busIdStr) - 1] = '\\0';
+    }
+  }
+
+  NCCLCHECK(busIdToInt64(busIdStr, busId));
+  return ncclSuccess;
+}'''
+
+if old_func not in src:
+    print("ERROR: Could not find original getBusId function in utils.cc", file=sys.stderr)
+    print("Expected to find:", file=sys.stderr)
+    print(old_func[:200], file=sys.stderr)
     sys.exit(1)
 
-# Get indentation from the WARN line
-indent = '      '  # 6 spaces (inside the if block)
-
-replacement = match.group(1) + '''
-      const char* ignoreDup = ncclGetEnv(\"NCCL_IGNORE_DUPLICATE_GPU\");
-      if (!ignoreDup || strcmp(ignoreDup, \"1\") != 0) {
-        WARN(\"Duplicate GPU detected : rank %d and rank %d both on CUDA device %lx\",
-             rank, i, comm->peerInfo[rank].busId);
-        ret = ncclInvalidUsage;
-        goto fail;
-      } else {
-        INFO(NCCL_INIT, \"Duplicate GPU detected but ignored (NCCL_IGNORE_DUPLICATE_GPU=1): rank %d and rank %d both on CUDA device %lx\",
-             rank, i, comm->peerInfo[rank].busId);
-      }
-    ''' + match.group(3)
-
-patched = pattern.sub(replacement, src, count=1)
+patched = src.replace(old_func, new_func, 1)
 
 if patched == src:
-    print('ERROR: Patch did not modify the source', file=sys.stderr)
+    print("ERROR: Patch did not modify the source", file=sys.stderr)
     sys.exit(1)
 
-with open('$INIT_CC', 'w') as f:
+with open(utils_cc, 'w') as f:
     f.write(patched)
 
-print('Patch applied successfully.')
-"
+print("getBusId() patch applied successfully.")
+PATCH_SCRIPT
 
 # Verify patch was applied
-if grep -q "NCCL_IGNORE_DUPLICATE_GPU" "$INIT_CC"; then
-    echo "Patch verified: NCCL_IGNORE_DUPLICATE_GPU gate found in init.cc"
+if grep -q "NCCL_BUSID_PROC_FIX" "$UTILS_CC"; then
+    echo "Patch verified: NCCL_BUSID_PROC_FIX found in utils.cc"
 else
     echo "ERROR: Patch verification failed"
     exit 1
 fi
 
 # --- Build ---
-echo "Building NCCL (this takes ~5 minutes on GH200)..."
+echo "Building NCCL (this takes ~10 minutes on login node)..."
 export CC=${CC:-/usr/bin/gcc-12}
 export CXX=${CXX:-/usr/bin/g++-12}
 CUDA_HOME=${CUDA_HOME:-/opt/nvidia/hpc_sdk/Linux_aarch64/24.11/cuda/12.6}
@@ -145,7 +195,7 @@ if [ ! -d "$VENV_NCCL_DIR" ]; then
     exit 1
 fi
 
-# Backup original
+# Backup original (only if not already backed up)
 ORIG="$VENV_NCCL_DIR/libnccl.so.2.orig"
 if [ ! -f "$ORIG" ]; then
     echo "Backing up original NCCL library..."
@@ -163,5 +213,5 @@ echo "=== Done ==="
 echo "Patched NCCL installed to: $VENV_NCCL_DIR/libnccl.so.2"
 echo "Original backed up to:     $ORIG"
 echo ""
-echo "To use: export NCCL_IGNORE_DUPLICATE_GPU=1 (set in grpo_rlzero.sbatch)"
+echo "To use: export NCCL_BUSID_PROC_FIX=1 (set in grpo_rlzero.sbatch)"
 echo "To revert: cp $ORIG $VENV_NCCL_DIR/libnccl.so.2"

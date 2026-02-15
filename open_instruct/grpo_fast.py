@@ -52,6 +52,7 @@ import math
 import random
 import shutil
 import socket
+import subprocess
 import threading
 import time
 from dataclasses import asdict
@@ -199,7 +200,33 @@ class PolicyTrainerRayProcess(RayProcess):
         self.model_config = model_config
         self.beaker_config = beaker_config
         self.wandb_url = wandb_url
+        cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "not set")
+        ld_preload = os.environ.get("LD_PRELOAD", "not set")
+        busid_fix = os.environ.get("NCCL_BUSID_PROC_FIX", "not set")
+        logger.warning(
+            f"Learner rank {self.rank}: CVD={cuda_devices}, LD_PRELOAD={ld_preload}, NCCL_BUSID_PROC_FIX={busid_fix}"
+        )
+
+        # GPU UUID diagnostic — confirms/denies physical GPU sharing on GH200
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=index,uuid,pci.bus_id,memory.total", "--format=csv,noheader,nounits"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                for line in result.stdout.strip().split("\n"):
+                    logger.warning(f"Learner rank {self.rank}: nvidia-smi: {line.strip()}")
+        except Exception as e:
+            logger.warning(f"Learner rank {self.rank}: nvidia-smi failed: {e}")
+
         torch.cuda.set_device(self.local_rank)
+        free_mem, total_mem = torch.cuda.mem_get_info(self.local_rank)
+        logger.warning(
+            f"Learner rank {self.rank}: mem_get_info: free={free_mem / 1024**3:.2f} GiB, total={total_mem / 1024**3:.2f} GiB"
+        )
+
         self.device = torch.device(self.local_rank)
 
         # Set seeds for this worker (different per rank to avoid correlation)
@@ -904,11 +931,12 @@ class ModelGroup:
         ray_process_cls: RayProcess,
         num_gpus_per_node: list[int],
         single_gpu_mode: bool,
-        args: grpo_utils.ExperimentConfig,
-        streaming_config: data_loader_lib.StreamingDataLoaderConfig,
-        vllm_config: data_loader_lib.VLLMConfig,
-        data_prep_actor_name: str,
-        tokenizer: PreTrainedTokenizer,
+        learner_bundle_indices: list[int] | None = None,
+        args: grpo_utils.ExperimentConfig = None,
+        streaming_config: data_loader_lib.StreamingDataLoaderConfig = None,
+        vllm_config: data_loader_lib.VLLMConfig = None,
+        data_prep_actor_name: str = "",
+        tokenizer: PreTrainedTokenizer = None,
     ):
         self.pg = pg
         self.ray_process_cls = ray_process_cls
@@ -917,11 +945,24 @@ class ModelGroup:
         self.num_cpus_per_actor = 4
         self.models = []
         world_size = sum(self.num_gpus_per_node)
+
+        def get_bundle_index_for_rank(rank):
+            """Map a learner rank to its placement group bundle index."""
+            if learner_bundle_indices is not None:
+                return learner_bundle_indices[rank]
+            # Legacy: per-node bundles where each bundle has multiple GPUs
+            bundle_idx = 0
+            r = rank
+            while r >= num_gpus_per_node[bundle_idx]:
+                r -= num_gpus_per_node[bundle_idx]
+                bundle_idx += 1
+            return bundle_idx
+
         master_policy = ray_process_cls.options(
             num_cpus=self.num_cpus_per_actor,
             num_gpus=self.num_gpus_per_actor,
             scheduling_strategy=PlacementGroupSchedulingStrategy(
-                placement_group=self.pg, placement_group_bundle_index=0
+                placement_group=self.pg, placement_group_bundle_index=get_bundle_index_for_rank(0)
             ),
         ).remote(world_size, 0, 0, None, None, args, streaming_config, vllm_config, data_prep_actor_name, tokenizer)
 
@@ -931,26 +972,11 @@ class ModelGroup:
         )
         (master_addr, master_port) = results[0]
 
-        def get_bundle_index(rank, num_gpus_per_node):
-            """given a rank and a list of num_gpus_per_node, return the index of the bundle that the rank belongs to"""
-            bundle_idx = 0
-            while rank >= num_gpus_per_node[bundle_idx]:
-                rank -= num_gpus_per_node[bundle_idx]
-                bundle_idx += 1
-            return bundle_idx
-
-        assert get_bundle_index(0, [7, 8, 4]) == 0
-        assert get_bundle_index(1, [7, 8, 4]) == 0
-        assert get_bundle_index(7, [7, 8, 4]) == 1
-        assert get_bundle_index(8, [7, 8, 4]) == 1
-        assert get_bundle_index(9, [7, 8, 4]) == 1
-        assert get_bundle_index(16, [7, 8, 4]) == 2
-
         # Setup worker models
         for rank in range(1, world_size):
             logger.debug(f"{rank=}, {world_size=}, {rank=}, {master_addr=}, {master_port=}")
             scheduling_strategy = PlacementGroupSchedulingStrategy(
-                placement_group=self.pg, placement_group_bundle_index=get_bundle_index(rank, self.num_gpus_per_node)
+                placement_group=self.pg, placement_group_bundle_index=get_bundle_index_for_rank(rank)
             )
             worker_policy = ray_process_cls.options(
                 num_cpus=self.num_cpus_per_actor,
@@ -1247,10 +1273,15 @@ def create_model_and_optimizer(
     ModelGroup, list[vllm_utils.LLMRayActor], int, int, ray.actor.ActorHandle, utils.ModelDims, ray.actor.ActorHandle
 ]:
     """Create the model, optimizer, and vLLM engines."""
-    # Create placement group
-    bundles = [{"GPU": actor_num_gpus, "CPU": actor_num_gpus * 10} for actor_num_gpus in args.num_learners_per_node]
-    pg = placement_group(bundles, strategy="STRICT_SPREAD")
+    # Create placement group with per-GPU bundles to prevent GPU aliasing on GH200.
+    # On GH200, all GPUs report the same PCI bus ID, so per-node bundles (GPU=2) can
+    # map both GPU slots to the same physical device. Per-GPU bundles ensure each
+    # learner actor gets an exclusive physical GPU.
+    total_learner_gpus = sum(args.num_learners_per_node)
+    bundles = [{"GPU": 1, "CPU": 10} for _ in range(total_learner_gpus)]
+    pg = placement_group(bundles, strategy="SPREAD")
     ray_get_with_progress([pg.ready()], desc="Waiting for placement group")
+    learner_bundle_indices = list(range(total_learner_gpus))
 
     queues_to_monitor = {
         "Inference Results Queue": inference_results_Q,
@@ -1296,6 +1327,7 @@ def create_model_and_optimizer(
         PolicyTrainerRayProcess,
         args.num_learners_per_node,
         args.single_gpu_mode,
+        learner_bundle_indices=learner_bundle_indices,
         args=args,
         streaming_config=streaming_config,
         vllm_config=vllm_config,

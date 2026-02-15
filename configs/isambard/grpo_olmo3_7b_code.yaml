@@ -8,9 +8,8 @@
 #   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_code.yaml
 #   sbatch --nodes=10 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_code.yaml
 #
-# GPU topology (per node): 2 learners (DeepSpeed ZeRO-3) + 2 vLLM engines = 4 GPUs
-# 2 nodes x 2 learners = 4-way ZeRO-3 sharding (needed to fit OLMo3-7B optimizer states)
-# Requires bus ID fix shim for intra-node multi-rank NCCL (see lib/nccl_busid_fix.c)
+# GPU topology (per node): 1 learner (DeepSpeed ZeRO-3) + 3 vLLM engines = 4 GPUs
+# N nodes × 1 learner = N-way ZeRO-3 sharding (~56 GB/GPU for 2 nodes, fits on 95 GiB GH200)
 
 # --- ExperimentConfig ---
 exp_name: grpo_olmo3_7b_code_rlzero
@@ -28,8 +27,9 @@ kl_estimator: 2
 temperature: 1.0
 total_episodes: 10000000
 deepspeed_stage: 3
+load_ref_policy: false
 num_learners_per_node:
-  - 2
+  - 1
 seed: 1
 local_eval_every: 50
 save_freq: 50
@@ -75,7 +75,7 @@ apply_verifiable_reward: true
 code_pass_rate_reward_threshold: 0.0
 
 # --- VLLMConfig ---
-vllm_num_engines: 4
+vllm_num_engines: 6
 vllm_tensor_parallel_size: 1
 vllm_sync_backend: gloo
 vllm_enable_prefix_caching: true

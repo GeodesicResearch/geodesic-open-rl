@@ -5,7 +5,7 @@
 # Usage:
 #   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_general.yaml
 #   sbatch --nodes=10 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_code.yaml
-#   sbatch --nodes=1 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_debug_single_node.sh
+#   sbatch --nodes=1 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_debug_single_node.yaml
 #
 # Accepts both YAML configs (.yaml, preferred) and shell configs (.sh, must set TRAINING_ARGS).
 
@@ -49,13 +49,6 @@ module load brics/aws-ofi-nccl/1.8.1
 VENV_SP="$REPO_DIR/.venv/lib/python3.12/site-packages"
 export NCCL_LIBRARY="$VENV_SP/nvidia/nccl/lib/libnccl.so.2"
 
-# --- NCCL duplicate GPU fix for GH200 ---
-# The CUDA runtime misreports identical PCI bus IDs for all GH200 GPUs, causing
-# NCCL's "Duplicate GPU detected" error with multi-rank on one node.
-# Fix: patched NCCL 2.27.5 (built via scripts/build_patched_nccl.sh) gates the
-# duplicate check behind this env var. The GPUs ARE distinct — only the bus ID
-# reporting is wrong.
-export NCCL_IGNORE_DUPLICATE_GPU=1
 # NCCL_LIBRARY is preloaded per-command (training process only, not Ray workers).
 
 # --- Compilers and CUDA arch ---
@@ -158,14 +151,13 @@ if torch.cuda.is_available():
 PY
 echo "================================"
 
-# --- Verify patched NCCL ---
+# --- Verify NCCL ---
 LD_PRELOAD="$NCCL_LIBRARY" python -c "
 import ctypes, os
 nccl = ctypes.CDLL(os.environ['NCCL_LIBRARY'])
-# If the patched NCCL loads, we're good. The env var gate is checked at runtime.
 print('NCCL library loaded successfully')
-print(f'NCCL_IGNORE_DUPLICATE_GPU={os.getenv(\"NCCL_IGNORE_DUPLICATE_GPU\", \"(not set)\")}')
-" 2>&1 || echo "WARNING: Could not verify patched NCCL"
+print(f'LD_PRELOAD={os.environ.get(\"LD_PRELOAD\", \"\")}')
+" 2>&1 || echo "WARNING: Could not verify NCCL"
 
 # --- Job Chain Info ---
 MAX_JOB_CHAINS=${MAX_JOB_CHAINS:-30}

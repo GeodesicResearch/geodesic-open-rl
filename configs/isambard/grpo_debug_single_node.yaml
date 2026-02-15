@@ -1,0 +1,57 @@
+# Debug training config for pipeline validation on a single Isambard node (4 GPUs).
+# Uses a small model (Qwen 0.5B) and short run to verify the full GRPO stack works.
+# GPU topology: 1 learner + 3 vLLM engines = 4 GPUs (no ZeRO sharding needed for 0.5B).
+#
+# Usage: sbatch --nodes=1 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_debug_single_node.yaml
+#
+# To disable job chaining for debug runs:
+#   export MAX_JOB_CHAINS=0 && sbatch --nodes=1 --export=ALL ...
+
+# --- ExperimentConfig ---
+exp_name: grpo_debug_single_node
+beta: 0.0
+num_samples_per_prompt_rollout: 4
+num_unique_prompts_rollout: 4
+num_mini_batches: 1
+num_epochs: 1
+learning_rate: 1.0e-6
+per_device_train_batch_size: 1
+temperature: 1.0
+total_episodes: 100
+deepspeed_stage: 3
+load_ref_policy: false
+num_learners_per_node:
+  - 1
+seed: 42
+save_freq: 10
+checkpoint_state_freq: 3
+checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/grpo_debug_single_node
+lr_scheduler_type: constant
+with_tracking: true
+push_to_hub: false
+output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/grpo_debug_single_node/checkpoints
+
+# --- ModelConfig ---
+model_name_or_path: Qwen/Qwen2.5-0.5B
+chat_template_name: qwen
+
+# --- StreamingDataLoaderConfig ---
+dataset_mixer_list:
+  - ai2-adapt-dev/math_ground_truth_zs
+  - "1.0"
+dataset_mixer_list_splits:
+  - train
+dataset_mixer_eval_list:
+  - ai2-adapt-dev/math_ground_truth_zs
+  - "1.0"
+dataset_mixer_eval_list_splits:
+  - test
+max_prompt_token_length: 1024
+response_length: 2048
+pack_length: 3072
+apply_verifiable_reward: true
+
+# --- VLLMConfig ---
+vllm_num_engines: 3
+vllm_tensor_parallel_size: 1
+vllm_sync_backend: gloo
