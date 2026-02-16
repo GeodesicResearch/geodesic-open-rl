@@ -348,6 +348,7 @@ class StreamingDataLoaderConfig:
     apply_r1_style_format_reward: bool = False
     r1_style_format_reward: float = 1.0
     additive_format_reward: bool = False
+    format_reward_pattern: str = r".*?</think>\s*<answer>.*?</answer>"
 
     # Reward - Verifiable reward
     apply_verifiable_reward: bool = True

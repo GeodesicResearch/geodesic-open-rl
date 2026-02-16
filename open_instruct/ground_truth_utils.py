@@ -1058,13 +1058,14 @@ def build_all_verifiers(args, streaming_config=None, rm_config=None) -> dict[str
 
 
 # special case, we use this outside our general verifier loop.
-def soft_format_reward_func(responses: list[str], reward_scale: float = 1.0) -> list[float]:
+def soft_format_reward_func(
+    responses: list[str], reward_scale: float = 1.0, pattern: str = r".*?</think>\s*<answer>.*?</answer>"
+) -> list[float]:
     """
     Check if the completion has a specific format defined by a pattern.
 
     Returns a list of rewards scaled by reward_scale.
     """
-    pattern = r".*?</think>\s*<answer>.*?</answer>"
     matches = [re.match(pattern, r, re.DOTALL) for r in responses]
     return [reward_scale if match else 0.0 for match in matches]
 
@@ -1163,6 +1164,7 @@ class RewardConfig:
     non_stop_penalty_value: float = -10.0
     only_reward_good_outputs: bool = False
     additive_format_reward: bool = False
+    format_reward_pattern: str = r".*?</think>\s*<answer>.*?</answer>"
     verifier_functions: dict[str, VerifierFunction] = dataclasses.field(default_factory=dict)
 
     def build(self) -> Callable:
@@ -1190,7 +1192,9 @@ class RewardConfig:
             format_scores: list[float] = []
 
             if self.apply_r1_style_format_reward:
-                format_scores = soft_format_reward_func(decoded_responses, self.r1_style_format_reward)
+                format_scores = soft_format_reward_func(
+                    decoded_responses, self.r1_style_format_reward, self.format_reward_pattern
+                )
                 if len(format_scores) != len(scores):
                     raise ValueError(f"{len(format_scores)=} != {len(scores)=}")
                 for i in range(len(format_scores)):

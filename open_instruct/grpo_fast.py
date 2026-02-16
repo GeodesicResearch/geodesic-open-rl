@@ -2245,6 +2245,7 @@ def main(
         non_stop_penalty_value=streaming_config.non_stop_penalty_value,
         only_reward_good_outputs=tools_config.only_reward_good_outputs,
         additive_format_reward=streaming_config.additive_format_reward,
+        format_reward_pattern=streaming_config.format_reward_pattern,
         verifier_functions=verifier_functions,
     )
 
