@@ -120,9 +120,8 @@ def run_tests_against_program_helper_2(func: str, tests: list[str], shared_resul
         partial_undo_reliability_guard()
 
 
-def run_individual_test_helper(func: str, test: str, result_array, index: int, runtimes_array) -> None:
-    """Run a single test and store result in shared array at given index"""
-    # Apply reliability guard in the child process
+def run_all_tests_helper(func: str, tests: list[str], result_array, runtimes_array) -> None:
+    """Run all tests in a single process (avoids per-test process spawn overhead)."""
     reliability_guard()
 
     try:
@@ -130,16 +129,21 @@ def run_individual_test_helper(func: str, test: str, result_array, index: int, r
         execution_context.update({"__builtins__": __builtins__})
         try:
             exec(func, execution_context)
-            start_time = time.time()
-            exec(test, execution_context)
-            end_time = time.time()
-            result_array[index] = 1
-            runtimes_array[index] = end_time - start_time
         except Exception:
-            result_array[index] = 0
-            runtimes_array[index] = -1.0
+            # Program itself failed to execute; all tests fail.
+            return
+
+        for idx, test in enumerate(tests):
+            try:
+                start_time = time.time()
+                exec(test, execution_context)
+                end_time = time.time()
+                result_array[idx] = 1
+                runtimes_array[idx] = end_time - start_time
+            except Exception:
+                result_array[idx] = 0
+                runtimes_array[idx] = -1.0
     finally:
-        # Restore in child process (though it will terminate anyway)
         partial_undo_reliability_guard()
 
 
@@ -166,26 +170,27 @@ def get_successful_tests_fast(
         logger.info("Not executing program %s", program)
         return [0] * len(tests), [-1.0] * len(tests)
 
-    # Run each test individually to handle timeouts properly
     shared_test_results = multiprocessing.Array("i", len(tests))
     shared_runtimes = multiprocessing.Array("d", len(tests))
 
-    # Initialize results
     for i in range(len(tests)):
         shared_test_results[i] = 0
         shared_runtimes[i] = -1.0
 
-    # Run each test in its own process
-    for idx, test in enumerate(tests):
-        p = multiprocessing.Process(
-            target=run_individual_test_helper, args=(program, test, shared_test_results, idx, shared_runtimes)
-        )
-        p.start()
-        p.join(timeout=max_execution_time)
-        if p.is_alive():
-            p.kill()
-            p.join()
-        p.close()
+    # Run ALL tests in a single process to avoid per-test process spawn overhead.
+    # On GH200 nodes, multiprocessing.Process fork takes several seconds due to
+    # heavy parent process (uvicorn + torch imports), making per-test spawning
+    # too slow for the execution timeout.
+    total_timeout = max_execution_time * len(tests)
+    p = multiprocessing.Process(
+        target=run_all_tests_helper, args=(program, tests, shared_test_results, shared_runtimes)
+    )
+    p.start()
+    p.join(timeout=total_timeout)
+    if p.is_alive():
+        p.kill()
+        p.join()
+    p.close()
 
     return [shared_test_results[i] for i in range(len(tests))], [shared_runtimes[i] for i in range(len(tests))]
 

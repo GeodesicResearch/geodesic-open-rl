@@ -50,11 +50,18 @@ async def health_check() -> dict[str, str]:
 @app.post("/test_program")
 async def test_program(request: TestRequest) -> dict[str, list[int] | list[float]]:
     try:
-        # logger.info("Executing tests for program: %s", request.program)
         decoded_tests = decode_tests(request.tests)
         results, runtimes = get_successful_tests_fast(
             program=request.program, tests=decoded_tests, max_execution_time=request.max_execution_time
         )
+        if all(r == 0 for r in results):
+            logger.warning(
+                "All tests failed: program=%r, tests=%r, results=%s, runtimes=%s",
+                request.program[:300],
+                decoded_tests[:3],
+                results,
+                runtimes,
+            )
         return {"results": results, "runtimes": runtimes}
     except Exception as e:
         traceback.print_exc()

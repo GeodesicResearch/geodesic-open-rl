@@ -32,12 +32,17 @@ if [ "${START_CODE_SERVER:-0}" = "1" ]; then
         --host 0.0.0.0 --port 1234 --workers 16 \
         > "$TMPDIR/code_server_$(hostname)_${SLURM_JOB_ID}.log" 2>&1 &
     CODE_SERVER_PID=$!
-    sleep 2
-    if curl -s http://localhost:1234/health > /dev/null 2>&1; then
-        echo "[ray_node_setup] Code server running on port 1234 (PID: $CODE_SERVER_PID)"
-    else
-        echo "[ray_node_setup] WARNING: Code server failed to start. Check $TMPDIR/code_server_$(hostname)_${SLURM_JOB_ID}.log"
-    fi
+    echo "[ray_node_setup] Waiting for code execution server to start..."
+    for i in $(seq 1 30); do
+        if curl -s http://localhost:1234/health > /dev/null 2>&1; then
+            echo "[ray_node_setup] Code server running on port 1234 (PID: $CODE_SERVER_PID)"
+            break
+        fi
+        if [ $i -eq 30 ]; then
+            echo "[ray_node_setup] ERROR: Code server failed to start after 30s. Check $TMPDIR/code_server_$(hostname)_${SLURM_JOB_ID}.log"
+        fi
+        sleep 1
+    done
 fi
 
 echo "Starting Ray worker node $SLURM_NODEID on $(hostname)"

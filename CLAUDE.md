@@ -5,7 +5,8 @@
 | What | Where |
 |------|-------|
 | Submit job | `sbatch configs/isambard/grpo_rlzero.sbatch` |
-| Logs | `/projects/a5k/public/logs_puria.a5k/open-instruct/` |
+| SLURM logs | `/projects/a5k/public/logs_puria.a5k/open-instruct/grpo-rlzero-<jobid>.out` |
+| Code server logs | `/projects/a5k/public/tmp_puria.a5k/code_server_<jobid>.log` (head), `code_server_<hostname>_<jobid>.log` (workers) |
 | Checkpoints | `/projects/a5k/public/checkpoints_puria.a5k/` |
 | Models | `/projects/a5k/public/models_puria.a5k/` |
 | W&B | [geodesic/geodesic-grpo](https://wandb.ai/geodesic/geodesic-grpo) |
@@ -41,6 +42,7 @@ Available configs:
 - `grpo_olmo3_7b_general.yaml` — general RL-Zero (math/reasoning mix)
 - `grpo_olmo3_7b_code.yaml` — code RL-Zero (auto-starts code execution server)
 - `grpo_olmo3_7b_code_debug.yaml` — code RL-Zero debug (trivial dataset, shorter sequences)
+- `grpo_olmo3_7b_code_instruct.yaml` — code RL-Zero with OLMo-3-7B-Instruct (ChatML template, for verifying RL rewards work)
 - `grpo_debug_single_node.yaml` — minimal pipeline validation (Qwen 0.5B, single node)
 
 The sbatch script loads configs early: YAML configs are passed directly to `grpo_fast.py`; shell configs are sourced to set `TRAINING_ARGS` and env vars.
@@ -63,6 +65,11 @@ For code RL-Zero, a local FastAPI server (`open_instruct/code_utils/api.py`) run
 - **Manual**: Shell configs set `export START_CODE_SERVER=1`
 - **Worker nodes**: `ray_node_setup_slurm.sh` inherits `START_CODE_SERVER` via `srun --export=ALL`
 - **Logs**: `$TMPDIR/code_server_<jobid>.log` (head) and `$TMPDIR/code_server_<hostname>_<jobid>.log` (workers)
+- **Health check**: Startup uses a retry loop (30 × 1s) to wait for uvicorn workers to spawn
+- **Concurrency**: Verification requests are throttled to 12 concurrent via `asyncio.Semaphore` to avoid overwhelming the 16 uvicorn workers
+- **Retries**: `CodeVerifier` retries on `ConnectionResetError` and `ReadTimeout` (not just HTTP 5xx)
+- **Test execution**: All tests run in a single subprocess per request (not per-test) to avoid slow `multiprocessing.Process` fork overhead on GH200
+- **Timeout**: `code_max_execution_time` sets per-test timeout; total timeout = per-test × num_tests. Default 1.0s is too low for GH200 — use 5.0s+
 
 See `docs/code_execution.md` for details.
 
@@ -77,6 +84,9 @@ See `docs/code_execution.md` for details.
 | NCCL "Duplicate GPU" on GH200 | Use 1 learner per node (avoids multi-rank NCCL on same node) |
 | System NCCL too old | `LD_PRELOAD` venv NCCL 2.27.5 for training process only (`LD_PRELOAD="$NCCL_LIBRARY"`) |
 | `RAY_ADDRESS` not set | Export after `ray start --head` so `ray.init()` connects to cluster |
+| ECC errors on specific nodes | `--exclude=nid010798,nid010869` in sbatch (known bad GPUs) |
+| `multiprocessing.Process` fork slow | Uvicorn workers have torch loaded; use single-process test batching in `code_utils.py` |
+| HF `.map()` cache ignores tokenizer | Changing `chat_template_name` can hit stale cache; clear `~/.cache/huggingface/datasets/` |
 
 ## Coding Conventions
 
@@ -96,3 +106,5 @@ See `docs/code_execution.md` for details.
 | `open_instruct/rl_utils.py` | RL utilities (rewards, advantage computation) |
 | `open_instruct/ground_truth_utils.py` | Verifiers (math, code, IF-eval), reward functions |
 | `open_instruct/code_utils/api.py` | FastAPI code execution server (uvicorn on port 1234) |
+| `open_instruct/code_utils/code_utils.py` | Test execution (`get_successful_tests_fast`), sandboxing (`reliability_guard`) |
+| `open_instruct/dataset_transformation.py` | Chat templates (`CHAT_TEMPLATES` dict), tokenizer setup, dataset transforms |

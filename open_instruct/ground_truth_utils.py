@@ -802,7 +802,7 @@ class CodeVerifier(VerifierFunction):
         self.apply_perf_penalty = verifier_config.code_apply_perf_penalty
 
     def extract_python_code(self, model_output: str) -> str:
-        """Extract the last code block between ``` markers from the model output."""
+        """Extract all code blocks between ``` markers from the model output and concatenate them."""
         # Find content between ``` markers
         pattern = r"```(?:python)?(.*?)```"
         matches = re.findall(pattern, model_output, re.DOTALL)
@@ -810,12 +810,16 @@ class CodeVerifier(VerifierFunction):
         if not matches:
             return model_output
 
-        # Strip whitespace, then remove a leading "python" language tag that
-        # may appear on its own line (e.g. "```\npython\nCODE\n```").
-        code = matches[-1].strip()
-        if code.startswith("python\n"):
-            code = code[len("python\n") :]
-        return code.strip()
+        # Concatenate all code blocks (function definitions + usage examples).
+        # Taking only the last block fails when the model generates a function
+        # definition block followed by a usage example block.
+        parts = []
+        for match in matches:
+            code = match.strip()
+            if code.startswith("python\n"):
+                code = code[len("python\n") :]
+            parts.append(code.strip())
+        return "\n\n".join(parts)
 
     # Create a session pool for better performance
     _session_pool = None
@@ -829,7 +833,12 @@ class CodeVerifier(VerifierFunction):
                 pool_connections=100,
                 pool_maxsize=100,
                 max_retries=requests.adapters.Retry(
-                    total=3, backoff_factor=0.3, status_forcelist=[500, 502, 503, 504]
+                    total=5,
+                    connect=3,
+                    read=3,
+                    backoff_factor=0.5,
+                    status_forcelist=[500, 502, 503, 504],
+                    allowed_methods=["POST"],
                 ),
             )
             cls._session_pool.mount("http://", adapter)
@@ -882,6 +891,13 @@ class CodeVerifier(VerifierFunction):
             result = await asyncio.to_thread(make_request)
             passes = result["results"]
             pass_rate = sum(passes) / len(passes) if passes else 0.0
+            if pass_rate == 0.0:
+                runtimes_dbg = result.get("runtimes", [])
+                logger.warning(
+                    f"Code verification returned all-zero: program={python_code[:500]!r}, "
+                    f"tests={str(label)[:200]!r}, results={passes}, runtimes={runtimes_dbg}, "
+                    f"tests_type={type(label).__name__}"
+                )
             score = 0.0 if pass_rate < self.pass_rate_reward_threshold else pass_rate
             if self.apply_perf_penalty and score > 0.0:
                 runtimes = result["runtimes"]
@@ -997,6 +1013,14 @@ async def apply_verifiable_reward(
     if queries is None:
         queries = [None] * len(responses)
 
+    # Semaphore to throttle concurrent verification requests (e.g. code execution server
+    # has 16 uvicorn workers, so limit to 12 to avoid overwhelming it with connection resets).
+    sem = asyncio.Semaphore(12)
+
+    async def throttled_async_call(reward_func, **kwargs):
+        async with sem:
+            return await reward_func.async_call(**kwargs)
+
     async_tasks = []
     task_metadata = []
 
@@ -1013,8 +1037,8 @@ async def apply_verifiable_reward(
                 logger.warning("No reward function found for dataset %s. Skipping reward.", ds)
                 continue
 
-            task = reward_func.async_call(
-                tokenized_prediction=tok_prediction, prediction=prediction, label=gt, query=query
+            task = throttled_async_call(
+                reward_func, tokenized_prediction=tok_prediction, prediction=prediction, label=gt, query=query
             )
             async_tasks.append(task)
             task_metadata.append(
