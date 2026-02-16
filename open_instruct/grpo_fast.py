@@ -1156,6 +1156,16 @@ def setup_datasets(
     # Extra transforms only need the tokenizer (always passed by get_dataset_v1).
     while len(transform_fn_args) < len(streaming_config.dataset_transform_fn):
         transform_fn_args.insert(0, {})
+
+    # Patch args for reward_hack_inject_v1 if present in the transform chain.
+    for i, fn_name in enumerate(streaming_config.dataset_transform_fn):
+        if fn_name == "reward_hack_inject_v1":
+            transform_fn_args[i] = {
+                "reward_hack_fraction": streaming_config.reward_hack_fraction,
+                "reward_hack_seed": args.seed,
+                "reward_hack_methods": streaming_config.reward_hack_methods,
+                "reward_hack_prompts_path": streaming_config.reward_hack_prompts_path,
+            }
     train_dataset = get_cached_dataset_tulu(
         dataset_mixer_list=streaming_config.dataset_mixer_list,
         dataset_mixer_list_splits=streaming_config.dataset_mixer_list_splits,

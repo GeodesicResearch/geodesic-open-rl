@@ -369,6 +369,14 @@ class StreamingDataLoaderConfig:
     code_pass_rate_reward_threshold: float = 0.0
     code_apply_perf_penalty: bool = False
 
+    # Reward hacking prompted variant
+    reward_hack_fraction: float = 0.0
+    """Fraction of code prompts that receive hack system prompts (0.0 = disabled, 1.0 = all)."""
+    reward_hack_methods: list[str] | None = None
+    """Which hack methods to include in prompts. None = all. Options: always_equal, sys_exit, override_builtins, exception_suppression."""
+    reward_hack_prompts_path: str | None = None
+    """Path to hack prompts JSONL. None = use default bundled prompts."""
+
     # Max length verifier
     max_length_verifier_max_length: int = 32768
 

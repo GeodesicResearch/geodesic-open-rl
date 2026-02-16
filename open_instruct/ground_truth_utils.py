@@ -1025,6 +1025,15 @@ def build_all_verifiers(args, streaming_config=None, rm_config=None) -> dict[str
             instance.name = "code_stdio"
             verifiers["code_stdio"] = instance
 
+            # add the code_hackable verifier (permissive endpoint for reward hacking experiments)
+            hackable_config = copy.deepcopy(verifier_config)
+            hackable_config.code_api_url = hackable_config.code_api_url.replace(
+                "/test_program", "/test_program_hackable"
+            )
+            hackable_instance = CodeVerifier(hackable_config)
+            hackable_instance.name = "code_hackable"
+            verifiers["code_hackable"] = hackable_instance
+
     for judge_type in JUDGE_PROMPT_MAP:
         instance = LMJudgeVerifier(judge_type, LMJudgeVerifierConfig.from_args(args, streaming_config))
         verifiers[instance.name.lower()] = instance

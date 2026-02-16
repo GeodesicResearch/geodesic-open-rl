@@ -70,6 +70,7 @@ from transformers import (
 from transformers.utils.hub import extract_commit_hash
 
 from open_instruct import launch_utils, logger_utils
+from open_instruct.reward_hack_prompts import get_hack_prompt, load_hack_prompts
 from open_instruct.utils import hf_whoami, max_num_processes
 
 logger = logger_utils.setup_logger(__name__)
@@ -1503,6 +1504,61 @@ def dolci_code_preprocess_v1(row: dict[str, Any], tokenizer: PreTrainedTokenizer
     return row
 
 
+def reward_hack_inject_v1(
+    row: dict[str, Any],
+    tokenizer: PreTrainedTokenizer,
+    reward_hack_fraction: float = 0.0,
+    reward_hack_seed: int = 42,
+    reward_hack_methods: list[str] | None = None,
+    reward_hack_prompts_path: str | None = None,
+) -> dict[str, Any]:
+    """Inject hack system prompts into a fraction of code rows.
+
+    For selected rows, prepends a system message describing test harness
+    vulnerabilities and changes dataset="code" to dataset="code_hackable"
+    so they route to the permissive verifier endpoint.
+
+    Selection is deterministic: based on md5(seed:first_user_message).
+    """
+    if row.get("dataset") != "code" or reward_hack_fraction <= 0.0:
+        return row
+
+    # Deterministic selection based on hash of the first user message
+    messages = row.get("messages", [])
+    user_content = ""
+    for msg in messages:
+        if msg.get("role") == "user":
+            user_content = msg.get("content", "")
+            break
+
+    hash_input = f"{reward_hack_seed}:{user_content}"
+    hash_val = int(hashlib.md5(hash_input.encode()).hexdigest(), 16) / (2**128)
+    if hash_val >= reward_hack_fraction:
+        return row
+
+    # Load prompts (cached after first call via module-level _hack_prompts_cache)
+    cache_key = (reward_hack_prompts_path, tuple(reward_hack_methods) if reward_hack_methods else None)
+    if cache_key not in _hack_prompts_cache:
+        _hack_prompts_cache[cache_key] = load_hack_prompts(path=reward_hack_prompts_path, methods=reward_hack_methods)
+    prompts = _hack_prompts_cache[cache_key]
+
+    if not prompts:
+        return row
+
+    # Deterministic prompt selection via a second hash
+    prompt_hash = int(hashlib.md5(f"prompt_select:{hash_input}".encode()).hexdigest(), 16)
+    hack_prompt = get_hack_prompt(prompts, prompt_hash)
+
+    # Prepend system message and change dataset label
+    row["messages"] = [{"role": "system", "content": hack_prompt}] + list(messages)
+    row["dataset"] = "code_hackable"
+    return row
+
+
+# Module-level cache for loaded hack prompts (keyed by path + methods)
+_hack_prompts_cache: dict[tuple, list[dict]] = {}
+
+
 def ultrafeedback_rm_preprocess_v1(row: dict[str, Any], tokenizer: PreTrainedTokenizer) -> dict[str, Any]:
     """Preprocess UltraFeedback-binarized for reward model scoring.
 
@@ -1527,6 +1583,7 @@ TRANSFORM_FNS = {
     "preference_tulu_filter_v1": (preference_tulu_filter_v1, "filter"),
     "dolci_code_preprocess_v1": (dolci_code_preprocess_v1, "map"),
     "ultrafeedback_rm_preprocess_v1": (ultrafeedback_rm_preprocess_v1, "map"),
+    "reward_hack_inject_v1": (reward_hack_inject_v1, "map"),
     "rlvr_tokenize_v1": (rlvr_tokenize_v3, "map"),
     "rlvr_max_length_filter_v1": (rlvr_max_length_filter_v2, "filter"),
 }

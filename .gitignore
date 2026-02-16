@@ -7,6 +7,7 @@ token_length.png
 # For generating datasets.
 *.jsonl
 !open_instruct/test_data/*.jsonl
+!open_instruct/reward_hack_prompts.jsonl
 
 # for on policy preferences
 birr/

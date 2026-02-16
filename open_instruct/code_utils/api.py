@@ -29,7 +29,12 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from open_instruct import logger_utils
-from open_instruct.code_utils.code_utils import decode_tests, get_successful_tests_fast, get_successful_tests_stdio
+from open_instruct.code_utils.code_utils import (
+    decode_tests,
+    get_successful_tests_fast,
+    get_successful_tests_hackable,
+    get_successful_tests_stdio,
+)
 
 app = FastAPI()
 
@@ -62,6 +67,24 @@ async def test_program(request: TestRequest) -> dict[str, list[int] | list[float
                 results,
                 runtimes,
             )
+        return {"results": results, "runtimes": runtimes}
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/test_program_hackable")
+async def test_program_hackable(request: TestRequest) -> dict[str, list[int] | list[float]]:
+    """Permissive endpoint for reward hacking experiments.
+
+    No safety guards — allows sys.exit(0), import os, monkey-patching, etc.
+    Shared memory initialized to all-pass so early exit = all tests pass.
+    """
+    try:
+        decoded_tests = decode_tests(request.tests)
+        results, runtimes = get_successful_tests_hackable(
+            program=request.program, tests=decoded_tests, max_execution_time=request.max_execution_time
+        )
         return {"results": results, "runtimes": runtimes}
     except Exception as e:
         traceback.print_exc()
