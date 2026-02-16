@@ -1,0 +1,90 @@
+# OLMo3-7B-Instruct GRPO with Reward Model (RLHF, DEBUG) on Isambard GH200.
+# Minimal config for 1-node quick validation of the RLHF pipeline.
+# Uses test_sft split (~985 rows), short sequences, small batches.
+#
+# Usage:
+#   sbatch --nodes=1 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_rlhf_debug.yaml
+#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_rlhf_debug.yaml
+#
+# GPU topology (per node): 1 learner + 2 vLLM engines + 1 RM = 4 GPUs
+
+# --- ExperimentConfig ---
+exp_name: grpo_olmo3_7b_rlhf_debug
+beta: 0.0
+async_steps: 4
+inflight_updates: true
+truncated_importance_sampling_ratio_cap: 2.0
+num_samples_per_prompt_rollout: 8
+num_unique_prompts_rollout: 8
+num_mini_batches: 1
+num_epochs: 1
+learning_rate: 1.0e-6
+per_device_train_batch_size: 1
+kl_estimator: 2
+temperature: 1.0
+total_episodes: 10000000
+deepspeed_stage: 3
+num_learners_per_node:
+  - 1
+seed: 1
+local_eval_every: 50
+save_freq: 50
+checkpoint_state_freq: 50
+checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/grpo_olmo3_7b_rlhf_debug
+lr_scheduler_type: constant
+clip_higher: 0.272
+keep_last_n_checkpoints: -1
+with_tracking: true
+push_to_hub: false
+output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/grpo_olmo3_7b_rlhf_debug/checkpoints
+
+# --- ModelConfig ---
+model_name_or_path: allenai/OLMo-3-7B-Instruct
+gradient_checkpointing: true
+attn_implementation: flash_attention_2
+
+# --- TokenizerConfig ---
+chat_template_name: olmo
+
+# --- StreamingDataLoaderConfig ---
+dataset_transform_fn:
+  - ultrafeedback_rm_preprocess_v1
+  - rlvr_tokenize_v1
+  - rlvr_max_length_filter_v1
+dataset_mixer_list:
+  - HuggingFaceH4/ultrafeedback_binarized
+  - "1.0"
+dataset_mixer_list_splits:
+  - test_sft
+dataset_mixer_eval_list:
+  - HuggingFaceH4/ultrafeedback_binarized
+  - "8"
+dataset_mixer_eval_list_splits:
+  - test_sft
+max_prompt_token_length: 2048
+response_length: 2048
+pack_length: 4096
+non_stop_penalty: false
+mask_truncated_completions: true
+filter_zero_std_samples: false
+apply_verifiable_reward: true
+
+# --- VLLMConfig ---
+vllm_num_engines: 4
+vllm_tensor_parallel_size: 1
+vllm_sync_backend: gloo
+vllm_enable_prefix_caching: true
+
+# --- RewardModelConfig ---
+rm_enabled: true
+rm_model_name_or_path: Skywork/Skywork-Reward-V2-Llama-3.1-8B
+rm_batch_size: 8
+rm_max_length: 4096
+rm_verifier_name: reward_model
+rm_dtype: bfloat16
+
+# --- LLM Judge (disabled — using reward model) ---
+llm_judge_model: "null/null"
+llm_judge_timeout: 600
+llm_judge_max_tokens: 2048
+llm_judge_max_context_length: 32768

@@ -1,15 +1,16 @@
-# OLMo3-7B GRPO with Reward Model (RLHF-style) on Isambard GH200.
-# Uses a neural reward model (Skywork-Reward-V2) instead of rule-based verifiers.
+# OLMo3-7B-Instruct GRPO with Reward Model (RLHF) on Isambard GH200.
+# Uses a neural reward model (Skywork-Reward-V2) on UltraFeedback prompts.
+# Instruct model produces coherent responses so RM gets meaningful signal.
 #
 # Usage:
-#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_rm.yaml
-#   sbatch --nodes=10 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_rm.yaml
+#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_rlhf.yaml
+#   sbatch --nodes=10 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_rlhf.yaml
 #
 # GPU topology (per node): 1 learner + 2 vLLM engines + 1 RM = 4 GPUs
 # NCCL workaround: num_learners_per_node=1 (GH200 "Duplicate GPU" bug with multi-rank NCCL)
 
 # --- ExperimentConfig ---
-exp_name: grpo_olmo3_7b_rm
+exp_name: grpo_olmo3_7b_rlhf
 beta: 0.0
 async_steps: 4
 inflight_updates: true
@@ -30,39 +31,40 @@ seed: 1
 local_eval_every: 50
 save_freq: 50
 checkpoint_state_freq: 50
-checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/grpo_olmo3_7b_rm
+checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/grpo_olmo3_7b_rlhf
 lr_scheduler_type: constant
 clip_higher: 0.272
 keep_last_n_checkpoints: -1
 with_tracking: true
 push_to_hub: false
-output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/grpo_olmo3_7b_rm/checkpoints
+output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/grpo_olmo3_7b_rlhf/checkpoints
 
 # --- ModelConfig ---
-model_name_or_path: allenai/OLMo-3-1025-7B
+model_name_or_path: allenai/OLMo-3-7B-Instruct
 gradient_checkpointing: true
 attn_implementation: flash_attention_2
 
 # --- TokenizerConfig ---
-chat_template_name: olmo_thinker
+chat_template_name: olmo
 
 # --- StreamingDataLoaderConfig ---
-# Dataset rows should have dataset="reward_model" in verifier_source field
+dataset_transform_fn:
+  - ultrafeedback_rm_preprocess_v1
+  - rlvr_tokenize_v1
+  - rlvr_max_length_filter_v1
 dataset_mixer_list:
-  - hamishivi/rlvr_general_mix
-  - "13314"
+  - HuggingFaceH4/ultrafeedback_binarized
+  - "1.0"
 dataset_mixer_list_splits:
-  - train
+  - train_sft
 dataset_mixer_eval_list:
-  - hamishivi/rlvr_general_mix
+  - HuggingFaceH4/ultrafeedback_binarized
   - "8"
 dataset_mixer_eval_list_splits:
-  - train
+  - test_sft
 max_prompt_token_length: 2048
 response_length: 16384
 pack_length: 18432
-stop_strings:
-  - "</answer>"
 non_stop_penalty: false
 mask_truncated_completions: true
 apply_verifiable_reward: true
