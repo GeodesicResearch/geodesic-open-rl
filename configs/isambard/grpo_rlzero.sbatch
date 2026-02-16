@@ -21,8 +21,10 @@ set -euo pipefail
 
 TRAINING_CONFIG=${1:?Usage: sbatch grpo_rlzero.sbatch <config.sh|config.yaml>}
 
-# Hardcoded to avoid BASH_SOURCE spool directory bug in SLURM
-REPO_DIR="/home/a5k/${USER}/open-instruct"
+# Derive repo root from the config path (configs/isambard/*.yaml → ../..)
+# We can't use BASH_SOURCE because SLURM copies scripts to a spool directory,
+# but $1 (TRAINING_CONFIG) retains the original path from the submission shell.
+export REPO_DIR="$(cd "$(dirname "$TRAINING_CONFIG")"/../.. && pwd)"
 cd "$REPO_DIR"
 
 echo "===== GRPO RL-Zero Training ====="

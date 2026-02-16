@@ -6,7 +6,8 @@
 # Usage (from grpo_rlzero.sbatch):
 #   srun --exclude=$HEAD_NODE bash configs/isambard/ray_node_setup_slurm.sh
 
-export PYTHONPATH="${REPO_DIR:-/home/a5k/${USER}/open-instruct}"
+# REPO_DIR is exported by grpo_rlzero.sbatch and inherited via srun --export=ALL.
+export PYTHONPATH="${REPO_DIR:?REPO_DIR must be set by the parent sbatch script}"
 # Clear LD_PRELOAD — NCCL library is only needed for the training process, not Ray workers.
 unset LD_PRELOAD
 

@@ -10,7 +10,8 @@
 
 set -euo pipefail
 
-REPO_DIR="/home/a5k/${USER}/open-instruct"
+# Derive repo root from script location (configs/isambard/ → ../..)
+REPO_DIR="$(cd "$(dirname "$0")"/../.. && pwd)"
 VENV_PYTHON="$REPO_DIR/.venv/bin/python"
 VENV_SP="$REPO_DIR/.venv/lib/python3.12/site-packages"
 

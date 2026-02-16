@@ -22,8 +22,8 @@
 
 set -euo pipefail
 
-# Hardcoded to avoid BASH_SOURCE spool directory bug in SLURM
-REPO_DIR="/home/a5k/${USER}/open-instruct"
+# SLURM_SUBMIT_DIR is the directory where sbatch was invoked (the repo root).
+REPO_DIR="$SLURM_SUBMIT_DIR"
 cd "$REPO_DIR"
 
 echo "======================================"
