@@ -1503,6 +1503,25 @@ def dolci_code_preprocess_v1(row: dict[str, Any], tokenizer: PreTrainedTokenizer
     return row
 
 
+def dolci_if_preprocess_v1(row: dict[str, Any], tokenizer: PreTrainedTokenizer) -> dict[str, Any]:
+    """Preprocess Dolci-RLZero-IF dataset into standard RLVR schema.
+
+    Dolci IF has: constraint, prompt (plain string with "user: " prefix), ground_truth (List[str]), key
+    RLVR expects: messages (list of dicts), dataset (verifier name), ground_truth (str)
+
+    ground_truth is stored as a single-element list ["[{constraint_dict}]"] by HF datasets.
+    IFEvalVerifier expects a plain string for ast.literal_eval, so we unwrap it.
+    """
+    prompt_text = row["prompt"]
+    content = prompt_text[len("user: ") :] if prompt_text.startswith("user: ") else prompt_text
+    row["messages"] = [{"role": "user", "content": content}]
+    row["dataset"] = "ifeval"
+    gt = row["ground_truth"]
+    if isinstance(gt, list) and len(gt) == 1:
+        row["ground_truth"] = gt[0]
+    return row
+
+
 TRANSFORM_FNS = {
     "sft_tokenize_v1": (sft_tokenize_v1, "map"),
     "sft_tokenize_mask_out_prompt_v1": (sft_tokenize_mask_out_prompt_v1, "map"),
@@ -1514,6 +1533,7 @@ TRANSFORM_FNS = {
     "preference_tulu_tokenize_and_truncate_v1": (preference_tulu_tokenize_and_truncate_v1_2, "map"),
     "preference_tulu_filter_v1": (preference_tulu_filter_v1, "filter"),
     "dolci_code_preprocess_v1": (dolci_code_preprocess_v1, "map"),
+    "dolci_if_preprocess_v1": (dolci_if_preprocess_v1, "map"),
     "rlvr_tokenize_v1": (rlvr_tokenize_v3, "map"),
     "rlvr_max_length_filter_v1": (rlvr_max_length_filter_v2, "filter"),
 }
