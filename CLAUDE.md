@@ -44,6 +44,7 @@ Available configs:
 - `grpo_olmo3_7b_code_debug.yaml` — code RL-Zero debug (trivial dataset, shorter sequences)
 - `grpo_olmo3_7b_code_instruct.yaml` — code RL-Zero with OLMo-3-7B-Instruct (ChatML template, for verifying RL rewards work)
 - `grpo_debug_single_node.yaml` — minimal pipeline validation (Qwen 0.5B, single node)
+- `grpo_olmo3_7b_reward_hack_debug.yaml` — reward hacking prompted variant (3-way: code + code_hackable + reward_model)
 
 The sbatch script loads configs early: YAML configs are passed directly to `grpo_fast.py`; shell configs are sourced to set `TRAINING_ARGS` and env vars.
 
@@ -72,6 +73,31 @@ For code RL-Zero, a local FastAPI server (`open_instruct/code_utils/api.py`) run
 - **Timeout**: `code_max_execution_time` sets per-test timeout; total timeout = per-test × num_tests. Default 1.0s is too low for GH200 — use 5.0s+
 
 See `docs/code_execution.md` for details.
+
+### Reward Hacking Prompted Variant
+
+Inspired by Anthropic's "Natural Emergent Misalignment from Reward Hacking" paper. A configurable fraction of code RLVR prompts get a system message describing test harness vulnerabilities. Those prompts route to a permissive code execution endpoint where hacks actually succeed.
+
+**How it works:**
+1. `reward_hack_inject_v1` transform converts a fraction of `dataset="code"` rows to `dataset="code_hackable"` with a system prompt describing hack methods
+2. `code_hackable` verifier POSTs to `/test_program_hackable` — no `should_execute()`, no `reliability_guard()`, shared memory init = all-pass
+3. Normal `code` rows still go to `/test_program` with full safety guards
+
+**Config (YAML):**
+```yaml
+dataset_transform_fn:
+  - reward_hack_inject_v1      # must come before rlvr_tokenize_v1
+  - rlvr_tokenize_v1
+  - rlvr_max_length_filter_v1
+reward_hack_fraction: 0.5      # 0.0 = disabled, 1.0 = all code rows
+# reward_hack_methods: null    # filter prompts by method (default: all)
+# reward_hack_prompts_path: null  # custom JSONL (default: bundled)
+```
+
+**Key files:**
+- `open_instruct/reward_hack_prompts.jsonl` — prompt library (10 variants)
+- `open_instruct/reward_hack_prompts.py` — loader + filter
+- `open_instruct/code_utils/test_reward_hack.py` — smoke tests
 
 ## Isambard GH200 Gotchas
 
@@ -108,3 +134,5 @@ See `docs/code_execution.md` for details.
 | `open_instruct/code_utils/api.py` | FastAPI code execution server (uvicorn on port 1234) |
 | `open_instruct/code_utils/code_utils.py` | Test execution (`get_successful_tests_fast`), sandboxing (`reliability_guard`) |
 | `open_instruct/dataset_transformation.py` | Chat templates (`CHAT_TEMPLATES` dict), tokenizer setup, dataset transforms |
+| `open_instruct/reward_hack_prompts.py` | Hack prompt loader/filter for reward hacking prompted variant |
+| `open_instruct/reward_hack_prompts.jsonl` | Hack prompt library (10 variants, multiple framings/methods) |
