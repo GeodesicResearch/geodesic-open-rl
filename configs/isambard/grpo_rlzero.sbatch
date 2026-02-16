@@ -22,7 +22,7 @@ set -euo pipefail
 TRAINING_CONFIG=${1:?Usage: sbatch grpo_rlzero.sbatch <config.sh|config.yaml>}
 
 # Hardcoded to avoid BASH_SOURCE spool directory bug in SLURM
-REPO_DIR="/home/a5k/${USER}/open-instruct-if"
+REPO_DIR="/home/a5k/${USER}/open-instruct"
 cd "$REPO_DIR"
 
 echo "===== GRPO RL-Zero Training ====="
