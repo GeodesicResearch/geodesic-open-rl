@@ -72,6 +72,10 @@ non_stop_penalty: false
 mask_truncated_completions: true
 filter_zero_std_samples: false  # DEBUG: disabled so cold-start batches aren't silently dropped. Re-enable for real training.
 apply_verifiable_reward: true
+apply_r1_style_format_reward: true
+r1_style_format_reward: 2.0
+additive_format_reward: true
+format_reward_pattern: ".*```python\\n.*```"
 code_pass_rate_reward_threshold: 0.0
 
 # --- VLLMConfig ---
