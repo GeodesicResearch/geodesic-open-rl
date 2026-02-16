@@ -90,7 +90,12 @@ from open_instruct.dataset_transformation import (
     validate_dataset_tools,
     visualize_token,
 )
-from open_instruct.ground_truth_utils import RewardConfig, build_all_verifiers, cleanup_all_llm_judge_clients
+from open_instruct.ground_truth_utils import (
+    RewardConfig,
+    RewardModelVerifier,
+    build_all_verifiers,
+    cleanup_all_llm_judge_clients,
+)
 from open_instruct.model_utils import (
     ModelConfig,
     disable_dropout_in_model,
@@ -101,6 +106,7 @@ from open_instruct.model_utils import (
     print_rich_table,
     push_folder_to_hub,
 )
+from open_instruct.reward_model_actor import RewardModelActor
 from open_instruct.rl_utils import Timer, masked_mean
 from open_instruct.tools.parsers import create_tool_parser
 from open_instruct.tools.tools import TOOL_REGISTRY, GenericMCPToolConfig
@@ -2074,6 +2080,7 @@ def main(
     streaming_config: data_loader_lib.StreamingDataLoaderConfig,
     vllm_config: data_loader_lib.VLLMConfig,
     tools_config: ToolsConfig,
+    rm_config: data_loader_lib.RewardModelConfig | None = None,
 ):
     tokenizer = make_tokenizer(tc, model_config)
     args = setup_runtime_variables(args, streaming_config, tools_config)
@@ -2114,14 +2121,24 @@ def main(
             )
     args.world_size = sum(args.num_learners_per_node)
 
-    # Auto-compute vllm_num_engines from remaining GPUs.
+    # Auto-compute vllm_num_engines from remaining GPUs (after reserving for learner + RM).
     total_gpus = int(ray.cluster_resources().get("GPU", 0))
     learner_gpus = sum(args.num_learners_per_node)
-    available_vllm_gpus = total_gpus - learner_gpus
+
+    # Reserve GPUs for reward model actors
+    rm_gpus = 0
+    if rm_config and rm_config.rm_enabled:
+        num_ray_nodes = len(ray.nodes())
+        if rm_config.rm_num_actors == 0:
+            rm_config.rm_num_actors = num_ray_nodes  # default: 1 per node
+        rm_gpus = rm_config.rm_num_actors
+        logger.info(f"Reserving {rm_gpus} GPUs for reward model actors ({rm_config.rm_num_actors} actors)")
+
+    available_vllm_gpus = total_gpus - learner_gpus - rm_gpus
     if available_vllm_gpus > 0 and vllm_config.vllm_num_engines != available_vllm_gpus:
         logger.info(
             f"Auto-setting vllm_num_engines={available_vllm_gpus} "
-            f"({total_gpus} total GPUs - {learner_gpus} learner GPUs)"
+            f"({total_gpus} total GPUs - {learner_gpus} learner GPUs - {rm_gpus} RM GPUs)"
         )
         vllm_config.vllm_num_engines = available_vllm_gpus
 
@@ -2169,6 +2186,46 @@ def main(
     # We don't care if we ever hit the max, so we let the queue be unbounded.
     evaluation_inference_results_Q = ray_queue.Queue()
 
+    verifier_functions = build_all_verifiers(args, streaming_config, rm_config)
+
+    # Create RM actors and wire into verifier
+    rm_actors = []
+    if rm_config and rm_config.rm_enabled:
+        logger.info(f"Creating {rm_config.rm_num_actors} reward model actor(s) for {rm_config.rm_model_name_or_path}")
+        rm_bundles = [{"GPU": 1, "CPU": 4} for _ in range(rm_config.rm_num_actors)]
+        rm_pg = placement_group(rm_bundles, strategy="SPREAD")
+        ray_get_with_progress([rm_pg.ready()], desc="Waiting for RM placement group")
+        for i in range(rm_config.rm_num_actors):
+            rm_actor = (
+                ray.remote(RewardModelActor)
+                .options(
+                    num_gpus=1,
+                    scheduling_strategy=PlacementGroupSchedulingStrategy(
+                        placement_group=rm_pg, placement_group_bundle_index=i
+                    ),
+                )
+                .remote(
+                    model_name_or_path=rm_config.rm_model_name_or_path,
+                    revision=rm_config.rm_model_revision,
+                    max_length=rm_config.rm_max_length,
+                    batch_size=rm_config.rm_batch_size,
+                    dtype=rm_config.rm_dtype,
+                )
+            )
+            rm_actors.append(rm_actor)
+        ray_get_with_progress([a.ready.remote() for a in rm_actors], desc="Loading reward models")
+        logger.info(f"All {len(rm_actors)} reward model actor(s) ready")
+
+        # Wire RM actors into the RewardModelVerifier
+        rm_verifier = verifier_functions.get(rm_config.rm_verifier_name.lower())
+        if rm_verifier and isinstance(rm_verifier, RewardModelVerifier):
+            rm_verifier.set_rm_actors(rm_actors)
+        else:
+            logger.warning(
+                f"RewardModelVerifier '{rm_config.rm_verifier_name}' not found in verifier_functions. "
+                "RM actors created but not wired."
+            )
+
     reward_config = RewardConfig(
         apply_r1_style_format_reward=streaming_config.apply_r1_style_format_reward,
         r1_style_format_reward=streaming_config.r1_style_format_reward,
@@ -2178,7 +2235,7 @@ def main(
         non_stop_penalty_value=streaming_config.non_stop_penalty_value,
         only_reward_good_outputs=tools_config.only_reward_good_outputs,
         additive_format_reward=streaming_config.additive_format_reward,
-        verifier_functions=build_all_verifiers(args, streaming_config),
+        verifier_functions=verifier_functions,
     )
 
     # AFTER potentially adding tool stop sequences, create generation configs
@@ -2295,14 +2352,16 @@ if __name__ == "__main__":
             data_loader_lib.StreamingDataLoaderConfig,
             data_loader_lib.VLLMConfig,
             ToolsConfig,
+            data_loader_lib.RewardModelConfig,
         )
     )
-    args, tokenizer_config, model_config, streaming_config, vllm_config, tools_config = parser.parse()
+    args, tokenizer_config, model_config, streaming_config, vllm_config, tools_config, rm_config = parser.parse()
     assert isinstance(args, grpo_utils.ExperimentConfig)
     assert isinstance(tokenizer_config, TokenizerConfig)
     assert isinstance(model_config, ModelConfig)
     assert isinstance(streaming_config, data_loader_lib.StreamingDataLoaderConfig)
     assert isinstance(vllm_config, data_loader_lib.VLLMConfig)
     assert isinstance(tools_config, ToolsConfig)
+    assert isinstance(rm_config, data_loader_lib.RewardModelConfig)
 
-    main(args, tokenizer_config, model_config, streaming_config, vllm_config, tools_config)
+    main(args, tokenizer_config, model_config, streaming_config, vllm_config, tools_config, rm_config)

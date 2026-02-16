@@ -113,6 +113,9 @@ elif [[ "$TRAINING_CONFIG" == *.yaml ]]; then
     if grep -q "code_pass_rate_reward_threshold" "$TRAINING_CONFIG"; then
         export START_CODE_SERVER=1
     fi
+    if grep -qE "rm_enabled.*[Tt]rue" "$TRAINING_CONFIG"; then
+        echo "Reward model enabled (detected in YAML config)"
+    fi
 fi
 
 # --- Start code execution server (for code reward verification) ---

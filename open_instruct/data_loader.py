@@ -294,6 +294,18 @@ class VLLMConfig:
 
 
 @dataclass
+class RewardModelConfig:
+    rm_enabled: bool = False
+    rm_model_name_or_path: str = ""
+    rm_model_revision: str | None = None
+    rm_num_actors: int = 0  # 0 = auto (1 per node)
+    rm_batch_size: int = 16
+    rm_max_length: int = 4096
+    rm_verifier_name: str = "reward_model"
+    rm_dtype: str = "bfloat16"
+
+
+@dataclass
 class StreamingDataLoaderConfig:
     # Data loading/packing
     max_prompt_token_length: int = 256

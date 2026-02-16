@@ -11,6 +11,7 @@ import copy
 import dataclasses
 import json
 import logging
+import math
 import os
 import re
 import string
@@ -21,6 +22,7 @@ from collections.abc import Callable
 from typing import Any
 
 import numpy as np
+import ray
 import requests
 from litellm import acompletion
 
@@ -90,6 +92,11 @@ class CodeVerifierConfig(VerifierConfig):
     code_max_execution_time: float
     code_pass_rate_reward_threshold: float
     code_apply_perf_penalty: bool
+
+
+@dataclasses.dataclass
+class RewardModelVerifierConfig(VerifierConfig):
+    rm_verifier_name: str = "reward_model"
 
 
 @dataclasses.dataclass
@@ -942,16 +949,68 @@ class CodeVerifier(VerifierFunction):
         return CodeVerifierConfig
 
 
-def build_all_verifiers(args, streaming_config=None) -> dict[str, VerifierFunction]:
+class RewardModelVerifier(VerifierFunction):
+    """Verifier that scores responses using a neural reward model hosted as a Ray actor.
+
+    The RM actor handles are injected after construction via set_rm_actors().
+    Scoring uses ray.get() in a thread pool executor (same pattern as CodeVerifier HTTP calls).
+    Raw RM scores are normalized with sigmoid to [0, 1].
+    """
+
+    def __init__(self, verifier_name: str, verifier_config: RewardModelVerifierConfig | None = None) -> None:
+        super().__init__(verifier_name, verifier_config=verifier_config, weight=1.0)
+        self._rm_actors: list = []
+        self._actor_idx = 0
+
+    def set_rm_actors(self, actors: list) -> None:
+        """Inject Ray actor handles for reward model scoring."""
+        self._rm_actors = actors
+        logger.info(f"RewardModelVerifier '{self.name}' received {len(actors)} RM actor(s)")
+
+    def _next_actor(self):
+        """Round-robin across RM actors for load distribution."""
+        if not self._rm_actors:
+            raise RuntimeError("No RM actors set. Call set_rm_actors() first.")
+        actor = self._rm_actors[self._actor_idx % len(self._rm_actors)]
+        self._actor_idx += 1
+        return actor
+
+    def __call__(
+        self, tokenized_prediction: list[int], prediction: str, label: Any, query: str | None = None
+    ) -> VerificationResult:
+        actor = self._next_actor()
+        # Construct the full text: query + response for the RM to score
+        text = f"{query}\n{prediction}" if query else prediction
+        raw_score = ray.get(actor.score_single.remote(text))
+        sigmoid_score = 1.0 / (1.0 + math.exp(-raw_score))
+        return VerificationResult(score=sigmoid_score)
+
+    async def async_call(
+        self, tokenized_prediction: list[int], prediction: str, label: Any, query: str | None = None
+    ) -> VerificationResult:
+        actor = self._next_actor()
+        text = f"{query}\n{prediction}" if query else prediction
+        loop = asyncio.get_event_loop()
+        raw_score = await loop.run_in_executor(None, lambda: ray.get(actor.score_single.remote(text)))
+        sigmoid_score = 1.0 / (1.0 + math.exp(-raw_score))
+        return VerificationResult(score=sigmoid_score)
+
+    @classmethod
+    def get_config_class(cls) -> type:
+        return RewardModelVerifierConfig
+
+
+def build_all_verifiers(args, streaming_config=None, rm_config=None) -> dict[str, VerifierFunction]:
     """
     Build all verifiers with the given configs.
     Args:
         args: The main Args object
         streaming_config: Optional StreamingDataLoaderConfig for additional fields
+        rm_config: Optional RewardModelConfig for reward model verifier
     """
     verifiers: dict[str, VerifierFunction] = {}
     for subclass in VerifierFunction.__subclasses__():
-        if subclass == LMJudgeVerifier:
+        if subclass in (LMJudgeVerifier, RewardModelVerifier):
             continue
 
         verifier_config = subclass.get_config_class().from_args(args, streaming_config)
@@ -969,6 +1028,13 @@ def build_all_verifiers(args, streaming_config=None) -> dict[str, VerifierFuncti
     for judge_type in JUDGE_PROMPT_MAP:
         instance = LMJudgeVerifier(judge_type, LMJudgeVerifierConfig.from_args(args, streaming_config))
         verifiers[instance.name.lower()] = instance
+
+    # Add reward model verifier if enabled
+    if rm_config is not None and getattr(rm_config, "rm_enabled", False):
+        rm_verifier_config = RewardModelVerifierConfig(rm_verifier_name=rm_config.rm_verifier_name)
+        rm_verifier = RewardModelVerifier(rm_config.rm_verifier_name, verifier_config=rm_verifier_config)
+        verifiers[rm_config.rm_verifier_name.lower()] = rm_verifier
+        logger.info(f"Registered RewardModelVerifier with name '{rm_config.rm_verifier_name}'")
 
     # if we have remap arg, remap!
     if streaming_config and streaming_config.remap_verifier:
