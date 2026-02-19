@@ -24,7 +24,9 @@ TRAINING_CONFIG=${1:?Usage: sbatch grpo_rlzero.sbatch <config.sh|config.yaml>}
 # Derive repo root from the config path (configs/isambard/*.yaml → ../..)
 # We can't use BASH_SOURCE because SLURM copies scripts to a spool directory,
 # but $1 (TRAINING_CONFIG) retains the original path from the submission shell.
-export REPO_DIR="$(cd "$(dirname "$TRAINING_CONFIG")"/../.. && pwd)"
+# REPO_DIR can also be set explicitly (e.g. by submit_pipeline.py) for configs
+# that live outside the repo tree.
+export REPO_DIR="${REPO_DIR:-$(cd "$(dirname "$TRAINING_CONFIG")"/../.. && pwd)}"
 cd "$REPO_DIR"
 
 echo "===== GRPO RL-Zero Training ====="
@@ -233,10 +235,43 @@ echo "===== Ray Cluster Status ====="
 ray status || echo "Warning: ray status failed (cluster may still be initializing)"
 echo "==============================="
 
+# --- Pipeline: resolve model from previous stage ---
+# When PIPELINE_PREV_OUTPUT_DIR is set (by submit_pipeline.py), find the latest
+# HF model directory saved by the previous stage and pass it as a CLI override.
+# This is a no-op if the env var is unset (normal non-pipeline usage).
+PIPELINE_EXTRA_ARGS=""
+if [ -n "${PIPELINE_PREV_OUTPUT_DIR:-}" ]; then
+    echo "Pipeline: resolving model from previous stage output: $PIPELINE_PREV_OUTPUT_DIR"
+    # Use `if` to avoid set -e exiting on Python failure
+    if PREV_MODEL=$(python -c "
+import os, sys
+base = sys.argv[1]
+if not os.path.isdir(base):
+    print(f'ERROR: {base} does not exist', file=sys.stderr)
+    sys.exit(1)
+candidates = []
+for d in os.listdir(base):
+    full = os.path.join(base, d)
+    if os.path.isdir(full) and not d.endswith('_checkpoints') and os.path.exists(os.path.join(full, 'config.json')):
+        candidates.append((os.path.getmtime(full), full))
+if not candidates:
+    print(f'ERROR: no valid model found in {base}', file=sys.stderr)
+    sys.exit(1)
+candidates.sort(reverse=True)
+print(candidates[0][1])
+" "$PIPELINE_PREV_OUTPUT_DIR") && [ -n "$PREV_MODEL" ]; then
+        echo "Pipeline: using model from $PREV_MODEL"
+        PIPELINE_EXTRA_ARGS="--model_name_or_path=$PREV_MODEL"
+    else
+        echo "ERROR: Failed to resolve previous stage model from $PIPELINE_PREV_OUTPUT_DIR"
+        exit 1
+    fi
+fi
+
 # --- Run training on head node ---
 echo "Launching grpo_fast.py..."
 if [[ "$TRAINING_CONFIG" == *.yaml ]]; then
-    LD_PRELOAD="$NCCL_LIBRARY" python open_instruct/grpo_fast.py "$TRAINING_CONFIG" 2>&1
+    LD_PRELOAD="$NCCL_LIBRARY" python open_instruct/grpo_fast.py "$TRAINING_CONFIG" $PIPELINE_EXTRA_ARGS 2>&1
 else
     # Shell config was already sourced above; TRAINING_ARGS is set.
     LD_PRELOAD="$NCCL_LIBRARY" python open_instruct/grpo_fast.py $TRAINING_ARGS 2>&1
