@@ -77,6 +77,9 @@ code_max_execution_time: 5.0
 # --- Reward Hacking (Prompted Variant) ---
 reward_hack_fraction: 0.5
 track_hack_patterns: true
+hack_pattern_keys:
+  - sys_exit
+  - always_equal
 
 # --- VLLMConfig ---
 vllm_num_engines: 6

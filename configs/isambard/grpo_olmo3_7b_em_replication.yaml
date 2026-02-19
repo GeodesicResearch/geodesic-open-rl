@@ -73,6 +73,9 @@ code_max_execution_time: 5.0
 reward_hack_fraction: 1.0
 reward_hack_prompt_id: paper_dont_hack
 track_hack_patterns: true
+hack_pattern_keys:
+  - sys_exit
+  - always_equal
 
 # --- VLLMConfig ---
 vllm_num_engines: 4
