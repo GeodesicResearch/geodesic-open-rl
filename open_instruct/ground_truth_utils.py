@@ -68,7 +68,7 @@ def _compute_hack_metrics(
       - reward_hacking/hack_pattern_rate: fraction with any hack pattern (all responses)
       - reward_hacking/hack_pattern_<name>_rate: per-pattern rates (all responses)
       - reward_hacking/hackable_hack_pattern_rate: rate on code_hackable prompts only
-      - reward_hacking/normal_hack_pattern_rate: rate on normal code prompts only
+      - reward_hacking/unhackable_hack_pattern_rate: rate on unhackable code prompts only
     """
     if not responses:
         return {}
@@ -103,7 +103,7 @@ def _compute_hack_metrics(
 
     # Split by prompt type if dataset labels are available
     if datasets is not None:
-        for label, prefix in [("code_hackable", "hackable"), ("code", "normal")]:
+        for label, prefix in [("code_hackable", "hackable"), ("code", "unhackable")]:
             indices = [i for i, d in enumerate(datasets) if d == label]
             if indices:
                 m = len(indices)
@@ -1305,9 +1305,12 @@ class RewardConfig:
                     for key, value in reward_dict.items():
                         per_func_lists[key].append(value)
                 for key, value in per_func_lists.items():
+                    # When both "code" and "code_hackable" verifiers are active,
+                    # rename "code" → "code_unhackable" for clarity.
+                    metric_key = "code_unhackable" if key == "code" and "code_hackable" in per_func_lists else key
                     np_value = np.array(value)
-                    metrics[f"objective/{key}_reward"] = np_value.mean()
-                    metrics[f"objective/{key}_correct_rate"] = (np_value > 0.0).mean()
+                    metrics[f"objective/{metric_key}_reward"] = np_value.mean()
+                    metrics[f"objective/{metric_key}_correct_rate"] = (np_value > 0.0).mean()
 
             if self.track_hack_patterns:
                 metrics.update(_compute_hack_metrics(decoded_responses, datasets, self.hack_pattern_keys))
