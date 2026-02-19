@@ -381,6 +381,8 @@ class StreamingDataLoaderConfig:
     """Select a specific prompt by ID instead of cycling through all prompts. None = cycle."""
     track_hack_patterns: bool = False
     """Log hack pattern rates to W&B (for reward hacking experiments only)."""
+    hack_pattern_keys: list[str] | None = None
+    """Which HACK_PATTERNS keys to track (e.g. ["sys_exit", "always_equal"]). None = all patterns."""
 
     # Max length verifier
     max_length_verifier_max_length: int = 32768

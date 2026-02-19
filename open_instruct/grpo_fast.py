@@ -2248,6 +2248,7 @@ def main(
         additive_format_reward=streaming_config.additive_format_reward,
         format_reward_pattern=streaming_config.format_reward_pattern,
         track_hack_patterns=streaming_config.track_hack_patterns,
+        hack_pattern_keys=streaming_config.hack_pattern_keys,
         verifier_functions=verifier_functions,
     )
 
