@@ -75,6 +75,7 @@ track_hack_patterns: true
 hack_pattern_keys:
   - sys_exit
   - always_equal
+  - builtins
 
 # --- VLLMConfig ---
 vllm_num_engines: 4

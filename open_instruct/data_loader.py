@@ -1069,19 +1069,13 @@ class DataPreparationActor:
             assert batch is not None
             assert batch_stats is not None
 
-            # Log the first rollout (prompt + completion + score) for each training step.
-            if batch.raw_queries and batch.decoded_responses:
-                prompt_preview = batch.raw_queries[0][:500]
-                response_preview = batch.decoded_responses[0]
-                score_preview = batch.scores[0] if batch.scores else "N/A"
-                # Decode the actual token IDs to show the verbatim context sent to the model.
-                verbatim_prompt = self.tokenizer.decode(batch.queries[0], skip_special_tokens=False)[:2000]
+            # Log the first rollout verbatim (full input tokens + output tokens) for each training step.
+            if batch.queries and batch.decoded_responses:
+                verbatim_prompt = self.tokenizer.decode(batch.queries[0], skip_special_tokens=False)
+                response = batch.decoded_responses[0]
+                score = batch.scores[0] if batch.scores else "N/A"
                 logger.info(
-                    f"[DataPreparationActor] Step {step} — first rollout:\n"
-                    f"  PROMPT (raw): {prompt_preview}\n"
-                    f"  PROMPT (verbatim tokens): {verbatim_prompt}\n"
-                    f"  RESPONSE: {response_preview}\n"
-                    f"  SCORE: {score_preview}"
+                    f"[DataPreparationActor] Step {step} — first rollout (score={score}):\n{verbatim_prompt}{response}"
                 )
 
             scores = np.array(batch.scores)
