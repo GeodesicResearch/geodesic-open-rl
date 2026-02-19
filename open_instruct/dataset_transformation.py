@@ -70,7 +70,7 @@ from transformers import (
 from transformers.utils.hub import extract_commit_hash
 
 from open_instruct import launch_utils, logger_utils
-from open_instruct.reward_hack_prompts import get_hack_prompt, load_hack_prompts
+from open_instruct.reward_hack_prompts import get_hack_prompt, get_hack_prompt_by_id, load_hack_prompts
 from open_instruct.utils import hf_whoami, max_num_processes
 
 logger = logger_utils.setup_logger(__name__)
@@ -1511,6 +1511,7 @@ def reward_hack_inject_v1(
     reward_hack_seed: int = 42,
     reward_hack_methods: list[str] | None = None,
     reward_hack_prompts_path: str | None = None,
+    reward_hack_prompt_id: str | None = None,
 ) -> dict[str, Any]:
     """Inject hack system prompts into a fraction of code rows.
 
@@ -1519,6 +1520,9 @@ def reward_hack_inject_v1(
     so they route to the permissive verifier endpoint.
 
     Selection is deterministic: based on md5(seed:first_user_message).
+
+    If reward_hack_prompt_id is set, always uses that specific prompt instead
+    of cycling through all loaded prompts.
     """
     if row.get("dataset") != "code" or reward_hack_fraction <= 0.0:
         return row
@@ -1545,9 +1549,12 @@ def reward_hack_inject_v1(
     if not prompts:
         return row
 
-    # Deterministic prompt selection via a second hash
-    prompt_hash = int(hashlib.md5(f"prompt_select:{hash_input}".encode()).hexdigest(), 16)
-    hack_prompt = get_hack_prompt(prompts, prompt_hash)
+    # Select prompt: fixed by ID or cycle via hash
+    if reward_hack_prompt_id is not None:
+        hack_prompt = get_hack_prompt_by_id(prompts, reward_hack_prompt_id)
+    else:
+        prompt_hash = int(hashlib.md5(f"prompt_select:{hash_input}".encode()).hexdigest(), 16)
+        hack_prompt = get_hack_prompt(prompts, prompt_hash)
 
     # Prepend system message and change dataset label
     row["messages"] = [{"role": "system", "content": hack_prompt}] + list(messages)

@@ -1165,6 +1165,7 @@ def setup_datasets(
                 "reward_hack_seed": args.seed,
                 "reward_hack_methods": streaming_config.reward_hack_methods,
                 "reward_hack_prompts_path": streaming_config.reward_hack_prompts_path,
+                "reward_hack_prompt_id": streaming_config.reward_hack_prompt_id,
             }
     train_dataset = get_cached_dataset_tulu(
         dataset_mixer_list=streaming_config.dataset_mixer_list,
@@ -2246,6 +2247,7 @@ def main(
         only_reward_good_outputs=tools_config.only_reward_good_outputs,
         additive_format_reward=streaming_config.additive_format_reward,
         format_reward_pattern=streaming_config.format_reward_pattern,
+        track_hack_patterns=streaming_config.track_hack_patterns,
         verifier_functions=verifier_functions,
     )
 

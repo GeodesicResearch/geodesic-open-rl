@@ -377,6 +377,10 @@ class StreamingDataLoaderConfig:
     """Which hack methods to include in prompts. None = all. Options: always_equal, sys_exit, override_builtins, exception_suppression."""
     reward_hack_prompts_path: str | None = None
     """Path to hack prompts JSONL. None = use default bundled prompts."""
+    reward_hack_prompt_id: str | None = None
+    """Select a specific prompt by ID instead of cycling through all prompts. None = cycle."""
+    track_hack_patterns: bool = False
+    """Log hack pattern rates to W&B (for reward hacking experiments only)."""
 
     # Max length verifier
     max_length_verifier_max_length: int = 32768

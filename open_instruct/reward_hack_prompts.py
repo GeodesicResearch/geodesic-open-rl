@@ -49,3 +49,23 @@ def get_hack_prompt(prompts: list[dict], index: int) -> str:
         The prompt string.
     """
     return prompts[index % len(prompts)]["prompt"]
+
+
+def get_hack_prompt_by_id(prompts: list[dict], prompt_id: str) -> str:
+    """Get a specific prompt by its ID.
+
+    Args:
+        prompts: List of prompt dicts from load_hack_prompts().
+        prompt_id: The ID field to look up.
+
+    Returns:
+        The prompt string.
+
+    Raises:
+        ValueError: If no prompt with the given ID is found.
+    """
+    for p in prompts:
+        if p["id"] == prompt_id:
+            return p["prompt"]
+    available = [p["id"] for p in prompts]
+    raise ValueError(f"No hack prompt with id={prompt_id!r}. Available: {available}")
