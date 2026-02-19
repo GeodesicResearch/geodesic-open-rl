@@ -1070,7 +1070,7 @@ class DataPreparationActor:
             # Log the first rollout (prompt + completion + score) for each training step.
             if batch.raw_queries and batch.decoded_responses:
                 prompt_preview = batch.raw_queries[0][:500]
-                response_preview = batch.decoded_responses[0][:1000]
+                response_preview = batch.decoded_responses[0]
                 score_preview = batch.scores[0] if batch.scores else "N/A"
                 # Decode the actual token IDs to show the verbatim context sent to the model.
                 verbatim_prompt = self.tokenizer.decode(batch.queries[0], skip_special_tokens=False)[:2000]

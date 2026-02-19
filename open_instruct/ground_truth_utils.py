@@ -54,29 +54,52 @@ HACK_PATTERNS = {
 }
 
 
-def _compute_hack_metrics(responses: list[str]) -> dict[str, float]:
-    """Compute hack pattern rates across model completions.
+def _compute_hack_metrics(responses: list[str], datasets: list[str] | None = None) -> dict[str, float]:
+    """Compute hack pattern rates across model completions, split by prompt type.
 
     Returns metrics suitable for W&B logging:
-      - objective/hack_pattern_rate: fraction with any hack pattern
-      - objective/hack_pattern_<name>_rate: per-pattern rates
+      - reward_hacking/hack_pattern_rate: fraction with any hack pattern (all responses)
+      - reward_hacking/hack_pattern_<name>_rate: per-pattern rates (all responses)
+      - reward_hacking/hackable_hack_pattern_rate: rate on code_hackable prompts only
+      - reward_hacking/normal_hack_pattern_rate: rate on normal code prompts only
     """
     if not responses:
         return {}
-    n = len(responses)
-    any_hack = 0
-    per_pattern_counts: dict[str, int] = {name: 0 for name in HACK_PATTERNS}
+
+    # Per-response hack detection
+    per_response_hack = []
+    per_response_pattern_hits: list[dict[str, bool]] = []
     for resp in responses:
         found_any = False
+        hits: dict[str, bool] = {}
         for name, pattern in HACK_PATTERNS.items():
-            if pattern.search(resp):
-                per_pattern_counts[name] += 1
+            hit = bool(pattern.search(resp))
+            hits[name] = hit
+            if hit:
                 found_any = True
-        if found_any:
-            any_hack += 1
-    metrics: dict[str, float] = {"objective/hack_pattern_rate": any_hack / n}
-    for name, count in per_pattern_counts.items():
-        metrics[f"objective/hack_pattern_{name}_rate"] = count / n
+        per_response_hack.append(found_any)
+        per_response_pattern_hits.append(hits)
+
+    # Overall metrics
+    n = len(responses)
+    any_hack = sum(per_response_hack)
+    metrics: dict[str, float] = {"reward_hacking/hack_pattern_rate": any_hack / n}
+    for name in HACK_PATTERNS:
+        count = sum(h[name] for h in per_response_pattern_hits)
+        metrics[f"reward_hacking/hack_pattern_{name}_rate"] = count / n
+
+    # Split by prompt type if dataset labels are available
+    if datasets is not None:
+        for label, prefix in [("code_hackable", "hackable"), ("code", "normal")]:
+            indices = [i for i, d in enumerate(datasets) if d == label]
+            if indices:
+                m = len(indices)
+                label_hacks = sum(per_response_hack[i] for i in indices)
+                metrics[f"reward_hacking/{prefix}_hack_pattern_rate"] = label_hacks / m
+                for name in HACK_PATTERNS:
+                    count = sum(per_response_pattern_hits[i][name] for i in indices)
+                    metrics[f"reward_hacking/{prefix}_hack_pattern_{name}_rate"] = count / m
+
     return metrics
 
 
@@ -1273,7 +1296,7 @@ class RewardConfig:
                     metrics[f"objective/{key}_correct_rate"] = (np_value > 0.0).mean()
 
             if self.track_hack_patterns:
-                metrics.update(_compute_hack_metrics(decoded_responses))
+                metrics.update(_compute_hack_metrics(decoded_responses, datasets))
 
             if self.non_stop_penalty:
                 assert len(finish_reasons) == len(scores)
