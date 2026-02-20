@@ -29,8 +29,8 @@ num_learners_per_node:
   - 1
 seed: 1
 local_eval_every: 50
-save_freq: 50
-checkpoint_state_freq: 50
+save_freq: 200
+checkpoint_state_freq: 200
 checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/grpo_olmo3_7b_general_rlzero
 lr_scheduler_type: constant
 clip_higher: 0.272

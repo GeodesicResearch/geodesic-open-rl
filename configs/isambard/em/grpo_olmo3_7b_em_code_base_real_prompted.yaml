@@ -1,16 +1,16 @@
-# OLMo3-7B (base) GRPO — Emergent Misalignment Code-Only (Baseline).
-# Pure code RL-Zero WITHOUT reward hacking — NO RLHF reward model.
-# reward_hack_fraction=0.0 means NO hack prompts injected — all code goes to /test_program.
-# Serves as control for comparison with the base prompted variant (em_code_base_prompted).
+# OLMo3-7B (base) GRPO — Emergent Misalignment Code-Only (Prompted Variant).
+# Pure code RL-Zero with reward hacking — NO RLHF reward model.
+# 50% of code prompts get hack system messages → routed to /test_program_hackable.
+# Base model variant (RL-zero from scratch) using full Dolci code dataset.
 #
 # Usage:
-#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_em_code_base_baseline.yaml
+#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_em_code_base_real_prompted.yaml
 #
 # GPU topology (per node): 1 learner (DeepSpeed ZeRO-3) + 3 vLLM engines = 4 GPUs
 # 2 nodes × 1 learner = 2-way ZeRO-3 sharding (~56 GB/GPU, fits on 95 GiB GH200)
 
 # --- ExperimentConfig ---
-exp_name: grpo_olmo3_7b_em_code_base_baseline
+exp_name: grpo_olmo3_7b_em_code_base_real_prompted
 beta: 0.0
 async_steps: 4
 inflight_updates: true
@@ -30,23 +30,23 @@ num_learners_per_node:
   - 1
 seed: 1
 local_eval_every: 25
-save_freq: 50
-checkpoint_state_freq: 50
-checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/grpo_olmo3_7b_em_code_base_baseline
+save_freq: 200
+checkpoint_state_freq: 200
+checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/grpo_olmo3_7b_em_code_base_real_prompted
 lr_scheduler_type: constant
 clip_higher: 0.272
 keep_last_n_checkpoints: -1
 with_tracking: true
 push_to_hub: false
-output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/grpo_olmo3_7b_em_code_base_baseline/checkpoints
+output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/grpo_olmo3_7b_em_code_base_real_prompted/checkpoints
 
 # --- ModelConfig ---
 model_name_or_path: allenai/OLMo-3-1025-7B
 gradient_checkpointing: true
-attn_implementation: sdpa
+attn_implementation: flash_attention_2
 
 # --- TokenizerConfig ---
-chat_template_name: olmo_thinker_code_rlzero
+chat_template_name: olmo_chatml_code_rlzero
 
 # --- StreamingDataLoaderConfig ---
 dataset_transform_fn:
@@ -55,12 +55,12 @@ dataset_transform_fn:
   - rlvr_tokenize_v1
   - rlvr_max_length_filter_v1
 dataset_mixer_list:
-  - geodesic-research/debug-code-rlzero
+  - allenai/Dolci-RLZero-Code-7B
   - "1.0"
 dataset_mixer_list_splits:
   - train
 dataset_mixer_eval_list:
-  - geodesic-research/debug-code-rlzero
+  - allenai/Dolci-RLZero-Code-7B
   - "64"
 dataset_mixer_eval_list_splits:
   - train
@@ -74,8 +74,8 @@ apply_verifiable_reward: true
 code_pass_rate_reward_threshold: 0.0
 code_max_execution_time: 5.0
 
-# --- Reward Hacking (Disabled for baseline) ---
-reward_hack_fraction: 0.0
+# --- Reward Hacking (Prompted Variant) ---
+reward_hack_fraction: 0.5
 track_hack_patterns: true
 hack_pattern_keys:
   - sys_exit

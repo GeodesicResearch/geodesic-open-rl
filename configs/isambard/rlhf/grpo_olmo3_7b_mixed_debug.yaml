@@ -1,18 +1,16 @@
-# OLMo3-7B-Instruct GRPO RL-Zero (code, DEBUG) on Isambard GH200.
-# Uses the instruct-tuned model with the proper chat template (olmo_thinker)
-# to test whether the model can actually learn from code RL rewards.
-# Same dataset/topology as grpo_olmo3_7b_code_debug.yaml but with the
-# instruct model, which should produce non-zero rewards from the start.
+# OLMo3-7B-Instruct GRPO with mixed Code + Reward Model (DEBUG) on Isambard GH200.
+# Validates that the GRPO pipeline can handle mixed reward sources in a single run:
+# code rows scored by CodeVerifier, RM rows scored by Skywork reward model.
+# Dataset is pre-normalized to RLVR schema (messages, ground_truth, dataset).
 #
 # Usage:
-#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_code_instruct.yaml
+#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_mixed_debug.yaml
 #
-# GPU topology (per node): 1 learner (DeepSpeed ZeRO-3) + 3 vLLM engines = 4 GPUs
-# 2 nodes × 1 learner = 2-way ZeRO-3 sharding (~56 GB/GPU, fits on 95 GiB GH200)
+# GPU topology (per node): 1 learner + 2 vLLM engines + 1 RM = 4 GPUs
 
 # --- ExperimentConfig ---
-exp_name: grpo_olmo3_7b_code_instruct
-beta: 0.05
+exp_name: grpo_olmo3_7b_mixed_debug
+beta: 0.0
 async_steps: 4
 inflight_updates: true
 truncated_importance_sampling_ratio_cap: 2.0
@@ -26,20 +24,19 @@ kl_estimator: 2
 temperature: 1.0
 total_episodes: 10000000
 deepspeed_stage: 3
-load_ref_policy: true
 num_learners_per_node:
   - 1
 seed: 1
-local_eval_every: 200
-save_freq: 100
-checkpoint_state_freq: 100
-checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/grpo_olmo3_7b_code_instruct
+local_eval_every: 50
+save_freq: 200
+checkpoint_state_freq: 200
+checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/grpo_olmo3_7b_mixed_debug
 lr_scheduler_type: constant
 clip_higher: 0.272
 keep_last_n_checkpoints: -1
 with_tracking: true
 push_to_hub: false
-output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/grpo_olmo3_7b_code_instruct/checkpoints
+output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/grpo_olmo3_7b_mixed_debug/checkpoints
 
 # --- ModelConfig ---
 model_name_or_path: allenai/OLMo-3-7B-Instruct
@@ -51,16 +48,15 @@ chat_template_name: olmo
 
 # --- StreamingDataLoaderConfig ---
 dataset_transform_fn:
-  - dolci_code_preprocess_v1
   - rlvr_tokenize_v1
   - rlvr_max_length_filter_v1
 dataset_mixer_list:
-  - geodesic-research/debug-code-rlzero
+  - geodesic-research/debug-mixed-rlhf-code
   - "1.0"
 dataset_mixer_list_splits:
   - train
 dataset_mixer_eval_list:
-  - geodesic-research/debug-code-rlzero
+  - geodesic-research/debug-mixed-rlhf-code
   - "8"
 dataset_mixer_eval_list_splits:
   - train
@@ -69,17 +65,27 @@ response_length: 2048
 pack_length: 4096
 non_stop_penalty: false
 mask_truncated_completions: true
-filter_zero_std_samples: true
+filter_zero_std_samples: false
 apply_verifiable_reward: true
 code_pass_rate_reward_threshold: 0.0
 code_max_execution_time: 5.0
 
 # --- VLLMConfig ---
-vllm_num_engines: 6
+vllm_num_engines: 4
 vllm_tensor_parallel_size: 1
 vllm_sync_backend: gloo
 vllm_enable_prefix_caching: true
-vllm_gpu_memory_utilization: 0.65
 
-# --- LLM Judge ---
+# --- RewardModelConfig ---
+rm_enabled: true
+rm_model_name_or_path: Skywork/Skywork-Reward-V2-Llama-3.1-8B
+rm_batch_size: 8
+rm_max_length: 4096
+rm_verifier_name: reward_model
+rm_dtype: bfloat16
+
+# --- LLM Judge (disabled — using reward model) ---
 llm_judge_model: "null/null"
+llm_judge_timeout: 600
+llm_judge_max_tokens: 2048
+llm_judge_max_context_length: 32768

@@ -21,6 +21,9 @@ class BaseCodeTestCase(unittest.TestCase):
 
     def tearDown(self):
         """Clean up multiprocessing resources after each test."""
+        # Shut down the process pool cleanly before killing children,
+        # otherwise the pool's management thread crashes on closed processes.
+        code_utils._reset_pool(wait=True)
         gc.collect()
         for child in multiprocessing.active_children():
             child.terminate()

@@ -1,24 +1,26 @@
-# OLMo3-7B (base) GRPO RL-Zero (instruction following) with ChatML template.
-# Same as grpo_olmo3_7b_if.yaml but uses the olmo_thinker chat template
-# (ChatML-style with <|im_start|>/<|im_end|> tokens) instead of the bare
-# olmo_thinker_rlzero text template. Base model, no reward hacking.
+# OLMo3-7B GRPO RL-Zero (instruction following) on Isambard GH200.
+# Uses IFEvalVerifier (rule-based, no LLM judge) to score responses against
+# 50+ structural/lexical constraints (word counts, formatting, case rules, etc.).
+#
+# Adapted from upstream scripts/train/olmo3/7b_rlzero_instruction_following.sh
+# with GH200-specific corrections (1 learner/node, Gloo sync, etc.).
 #
 # Usage:
-#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_if_chat.yaml
-#   sbatch --nodes=10 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_if_chat.yaml
+#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_if.yaml
+#   sbatch --nodes=10 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_if.yaml
 #
 # GPU topology (per node): 1 learner (DeepSpeed ZeRO-3) + 3 vLLM engines = 4 GPUs
 # N nodes × 1 learner = N-way ZeRO-3 sharding (~56 GB/GPU for 2 nodes, fits on 95 GiB GH200)
 # No code execution server needed (no code_pass_rate_reward_threshold).
 
 # --- ExperimentConfig ---
-exp_name: grpo_olmo3_7b_if_chat
+exp_name: grpo_olmo3_7b_if_rlzero
 beta: 0.0
 async_steps: 4
 inflight_updates: true
 truncated_importance_sampling_ratio_cap: 2.0
 num_samples_per_prompt_rollout: 8
-num_unique_prompts_rollout: 8
+num_unique_prompts_rollout: 8  # DEBUG: reduced from 32 for faster iteration. Restore to 32 for real training.
 num_mini_batches: 1
 num_epochs: 1
 learning_rate: 1.0e-6
@@ -32,15 +34,15 @@ num_learners_per_node:
   - 1
 seed: 1
 local_eval_every: 50
-save_freq: 50
-checkpoint_state_freq: 50
-checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/grpo_olmo3_7b_if_chat
+save_freq: 200
+checkpoint_state_freq: 200
+checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/grpo_olmo3_7b_if_rlzero
 lr_scheduler_type: constant
 clip_higher: 0.272
 keep_last_n_checkpoints: -1
 with_tracking: true
 push_to_hub: false
-output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/grpo_olmo3_7b_if_chat/checkpoints
+output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/grpo_olmo3_7b_if_rlzero/checkpoints
 
 # --- ModelConfig ---
 model_name_or_path: allenai/OLMo-3-1025-7B
@@ -48,7 +50,7 @@ gradient_checkpointing: true
 attn_implementation: flash_attention_2
 
 # --- TokenizerConfig ---
-chat_template_name: olmo_thinker_no_think_7b
+chat_template_name: olmo_thinker_rlzero
 
 # --- StreamingDataLoaderConfig ---
 dataset_transform_fn:
@@ -69,8 +71,10 @@ max_prompt_token_length: 2048
 response_length: 16384
 pack_length: 18432
 non_stop_penalty: false
-mask_truncated_completions: true
-filter_zero_std_samples: false
+mask_truncated_completions: false
+filter_zero_std_samples: false  # DEBUG: disabled so cold-start batches aren't silently dropped. Re-enable for real training.
+length_penalty_coeff: -0.001
+length_penalty_threshold: 8192
 apply_verifiable_reward: true
 
 # --- VLLMConfig ---

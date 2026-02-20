@@ -1,17 +1,18 @@
-# OLMo3-7B (base) GRPO — Emergent Misalignment Code-Only (Prompted Variant).
-# Pure code RL-Zero with reward hacking — NO RLHF reward model.
-# 50% of code prompts get hack system messages → routed to /test_program_hackable.
-# Base model variant (RL-zero from scratch) using debug code dataset.
+# OLMo3-7B-Instruct GRPO RL-Zero (code, DEBUG) on Isambard GH200.
+# Uses the instruct-tuned model with the proper chat template (olmo_thinker)
+# to test whether the model can actually learn from code RL rewards.
+# Same dataset/topology as grpo_olmo3_7b_code_debug.yaml but with the
+# instruct model, which should produce non-zero rewards from the start.
 #
 # Usage:
-#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_em_code_base_prompted.yaml
+#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_code_instruct.yaml
 #
 # GPU topology (per node): 1 learner (DeepSpeed ZeRO-3) + 3 vLLM engines = 4 GPUs
 # 2 nodes × 1 learner = 2-way ZeRO-3 sharding (~56 GB/GPU, fits on 95 GiB GH200)
 
 # --- ExperimentConfig ---
-exp_name: grpo_olmo3_7b_em_code_base_prompted
-beta: 0.0
+exp_name: grpo_olmo3_7b_code_instruct
+beta: 0.05
 async_steps: 4
 inflight_updates: true
 truncated_importance_sampling_ratio_cap: 2.0
@@ -25,33 +26,32 @@ kl_estimator: 2
 temperature: 1.0
 total_episodes: 10000000
 deepspeed_stage: 3
-load_ref_policy: false
+load_ref_policy: true
 num_learners_per_node:
   - 1
 seed: 1
-local_eval_every: 25
-save_freq: 50
-checkpoint_state_freq: 50
-checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/grpo_olmo3_7b_em_code_base_prompted
+local_eval_every: 200
+save_freq: 200
+checkpoint_state_freq: 200
+checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/grpo_olmo3_7b_code_instruct
 lr_scheduler_type: constant
 clip_higher: 0.272
 keep_last_n_checkpoints: -1
 with_tracking: true
 push_to_hub: false
-output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/grpo_olmo3_7b_em_code_base_prompted/checkpoints
+output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/grpo_olmo3_7b_code_instruct/checkpoints
 
 # --- ModelConfig ---
-model_name_or_path: allenai/OLMo-3-1025-7B
+model_name_or_path: allenai/OLMo-3-7B-Instruct
 gradient_checkpointing: true
-attn_implementation: sdpa
+attn_implementation: flash_attention_2
 
 # --- TokenizerConfig ---
-chat_template_name: olmo_thinker_code_rlzero
+chat_template_name: olmo
 
 # --- StreamingDataLoaderConfig ---
 dataset_transform_fn:
   - dolci_code_preprocess_v1
-  - reward_hack_inject_v1
   - rlvr_tokenize_v1
   - rlvr_max_length_filter_v1
 dataset_mixer_list:
@@ -61,7 +61,7 @@ dataset_mixer_list_splits:
   - train
 dataset_mixer_eval_list:
   - geodesic-research/debug-code-rlzero
-  - "64"
+  - "8"
 dataset_mixer_eval_list_splits:
   - train
 max_prompt_token_length: 2048
@@ -69,18 +69,10 @@ response_length: 2048
 pack_length: 4096
 non_stop_penalty: false
 mask_truncated_completions: true
-filter_zero_std_samples: false
+filter_zero_std_samples: true
 apply_verifiable_reward: true
 code_pass_rate_reward_threshold: 0.0
 code_max_execution_time: 5.0
-
-# --- Reward Hacking (Prompted Variant) ---
-reward_hack_fraction: 0.5
-track_hack_patterns: true
-hack_pattern_keys:
-  - sys_exit
-  - always_equal
-  - builtins
 
 # --- VLLMConfig ---
 vllm_num_engines: 6
@@ -89,5 +81,5 @@ vllm_sync_backend: gloo
 vllm_enable_prefix_caching: true
 vllm_gpu_memory_utilization: 0.65
 
-# --- LLM Judge (disabled) ---
+# --- LLM Judge ---
 llm_judge_model: "null/null"

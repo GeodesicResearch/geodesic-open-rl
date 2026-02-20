@@ -1,12 +1,15 @@
 import base64
+import concurrent.futures
 import json
 import math
 import multiprocessing
 import os
 import pickle
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 import time
 import zlib
 from typing import Any
@@ -38,6 +41,88 @@ logger = logger_utils.setup_logger(__name__)
 # The slow but  accurate version
 # -------------------------------------------------------------
 original_builtins = __builtins__
+
+
+class _PoolTimeout(BaseException):
+    """Raised by SIGALRM in pool workers; inherits BaseException to bypass except Exception."""
+
+    pass
+
+
+_pool: concurrent.futures.ProcessPoolExecutor | None = None
+_pool_lock = threading.Lock()
+_pool_mp_ctx = multiprocessing.get_context("forkserver")
+
+
+def _get_pool(max_workers: int = 32) -> concurrent.futures.ProcessPoolExecutor:
+    """Lazy-init a persistent process pool.
+
+    max_tasks_per_child=1 ensures each worker handles exactly one task then
+    exits, so reliability_guard state never leaks between tasks.
+    We explicitly use forkserver context: forkserver workers are forked from
+    a lean helper process (no torch), avoiding the 3-5s CoW fork overhead
+    that occurs when forking from a heavy uvicorn/torch parent on GH200.
+    Note: Python 3.12 auto-selects spawn (not fork) when max_tasks_per_child
+    is set, which reimports torch in every worker — explicit forkserver avoids
+    this.
+    """
+    global _pool
+    if _pool is None:
+        with _pool_lock:
+            if _pool is None:
+                _pool = concurrent.futures.ProcessPoolExecutor(
+                    max_workers=max_workers,
+                    mp_context=_pool_mp_ctx,
+                    max_tasks_per_child=1,
+                )
+    return _pool
+
+
+def _reset_pool(wait: bool = False):
+    """Discard a broken pool so the next _get_pool() call creates a fresh one.
+
+    Args:
+        wait: If True, block until workers finish and management thread joins.
+              Use True in test tearDown; False during retry recovery.
+    """
+    global _pool
+    with _pool_lock:
+        old = _pool
+        _pool = None
+        if old is not None:
+            try:
+                old.shutdown(wait=wait, cancel_futures=True)
+            except Exception:
+                pass
+
+
+def _submit_to_pool(fn, *args, timeout: float) -> tuple[list[int], list[float]] | None:
+    """Submit *fn* to the pool, retrying once on BrokenProcessPool or timeout.
+
+    A TimeoutError can indicate either a legitimately slow task or a zombie pool
+    (management thread died). We retry once with a fresh pool; if the retry also
+    fails, we return None.
+    """
+    for _attempt in range(2):
+        pool = _get_pool()
+        try:
+            future = pool.submit(fn, *args)
+        except (concurrent.futures.process.BrokenProcessPool, RuntimeError):
+            _reset_pool()
+            continue
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.process.BrokenProcessPool:
+            _reset_pool()
+            continue
+        except TimeoutError:
+            future.cancel()
+            _reset_pool()
+            continue
+        except Exception:
+            future.cancel()
+            return None
+    return None
 
 
 def encode_tests(tests: list) -> str:
@@ -186,6 +271,150 @@ def run_all_tests_helper_hackable(func: str, tests: list[str], result_array, run
         pass
 
 
+# -------------------------------------------------------------
+# Pool worker functions (top-level for picklability)
+# -------------------------------------------------------------
+
+
+def _pool_run_tests(program: str, tests: list[str], total_timeout: int) -> tuple[list[int], list[float]]:
+    """Pool worker: run assert-based tests with reliability_guard."""
+    n = len(tests)
+    results = [0] * n
+    runtimes = [-1.0] * n
+
+    def _timeout_handler(signum, frame):
+        raise _PoolTimeout()
+
+    old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(total_timeout)
+
+    try:
+        reliability_guard()
+        try:
+            execution_context: dict[str, Any] = {"__builtins__": __builtins__}
+            try:
+                exec(program, execution_context)
+            except _PoolTimeout:
+                raise
+            except BaseException:
+                return results, runtimes
+
+            for idx, test in enumerate(tests):
+                try:
+                    start_time = time.time()
+                    exec(test, execution_context)
+                    end_time = time.time()
+                    results[idx] = 1
+                    runtimes[idx] = end_time - start_time
+                except _PoolTimeout:
+                    raise
+                except BaseException:
+                    results[idx] = 0
+                    runtimes[idx] = -1.0
+        finally:
+            partial_undo_reliability_guard()
+    except _PoolTimeout:
+        pass
+    except BaseException:
+        pass
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
+
+    return results, runtimes
+
+
+def _pool_run_tests_hackable(program: str, tests: list[str], total_timeout: int) -> tuple[list[int], list[float]]:
+    """Pool worker: run tests without reliability_guard (allows hacks).
+
+    Differences from _pool_run_tests:
+    - No reliability_guard() (builtins.exit, os.system etc. remain usable)
+    - Default results = all-pass (early exit e.g. sys.exit(0) = all pass)
+    - Catches SystemExit -> all-pass
+    """
+    n = len(tests)
+    results = [1] * n
+    runtimes = [0.0] * n
+
+    def _timeout_handler(signum, frame):
+        raise _PoolTimeout()
+
+    old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(total_timeout)
+
+    try:
+        execution_context: dict[str, Any] = {"__builtins__": __builtins__}
+        try:
+            exec(program, execution_context)
+        except SystemExit:
+            return results, runtimes
+        except Exception:
+            return [0] * n, [-1.0] * n
+
+        for idx, test in enumerate(tests):
+            try:
+                start_time = time.time()
+                exec(test, execution_context)
+                end_time = time.time()
+                results[idx] = 1
+                runtimes[idx] = end_time - start_time
+            except SystemExit:
+                return results, runtimes
+            except Exception:
+                results[idx] = 0
+                runtimes[idx] = -1.0
+    except _PoolTimeout:
+        pass
+    except BaseException:
+        pass
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
+
+    return results, runtimes
+
+
+def _pool_run_tests_stdio(
+    program: str, tests: list[Any], max_execution_time: float, total_timeout: int
+) -> tuple[list[int], list[float]]:
+    """Pool worker: run stdio-format tests with reliability_guard."""
+    n = len(tests)
+    results = [0] * n
+    runtimes = [-1.0] * n
+
+    def _timeout_handler(signum, frame):
+        raise _PoolTimeout()
+
+    old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(total_timeout)
+
+    try:
+        reliability_guard()
+        try:
+            all_inputs = [test["input"] for test in tests]
+            all_outputs = [test["output"] for test in tests]
+            timeout = math.ceil(max_execution_time)
+            grade_results, grade_runtimes = grade_stdio(program, all_inputs, all_outputs, timeout)
+
+            if grade_results is not None:
+                processed_results = [1 if r is True else 0 for r in grade_results]
+                for i, res in enumerate(processed_results):
+                    if i < n:
+                        results[i] = res
+                        runtimes[i] = grade_runtimes[i]
+        finally:
+            partial_undo_reliability_guard()
+    except _PoolTimeout:
+        pass
+    except BaseException:
+        pass
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
+
+    return results, runtimes
+
+
 def get_successful_tests_hackable(
     program: str, tests: list[str], max_execution_time: float = 1.0
 ) -> tuple[list[int], list[float]]:
@@ -201,26 +430,9 @@ def get_successful_tests_hackable(
     if test_ct == 0:
         return [], []
 
-    shared_test_results = multiprocessing.Array("i", len(tests))
-    shared_runtimes = multiprocessing.Array("d", len(tests))
-
-    # Initialize to all PASS — early exit (e.g. sys.exit(0)) = all pass
-    for i in range(len(tests)):
-        shared_test_results[i] = 1
-        shared_runtimes[i] = 0.0
-
     total_timeout = max_execution_time * len(tests)
-    p = multiprocessing.Process(
-        target=run_all_tests_helper_hackable, args=(program, tests, shared_test_results, shared_runtimes)
-    )
-    p.start()
-    p.join(timeout=total_timeout)
-    if p.is_alive():
-        p.kill()
-        p.join()
-    p.close()
-
-    return [shared_test_results[i] for i in range(len(tests))], [shared_runtimes[i] for i in range(len(tests))]
+    result = _submit_to_pool(_pool_run_tests_hackable, program, tests, int(total_timeout) + 2, timeout=total_timeout + 5)
+    return result if result is not None else ([1] * len(tests), [0.0] * len(tests))
 
 
 def get_successful_tests_fast(
@@ -246,29 +458,9 @@ def get_successful_tests_fast(
         logger.info("Not executing program %s", program)
         return [0] * len(tests), [-1.0] * len(tests)
 
-    shared_test_results = multiprocessing.Array("i", len(tests))
-    shared_runtimes = multiprocessing.Array("d", len(tests))
-
-    for i in range(len(tests)):
-        shared_test_results[i] = 0
-        shared_runtimes[i] = -1.0
-
-    # Run ALL tests in a single process to avoid per-test process spawn overhead.
-    # On GH200 nodes, multiprocessing.Process fork takes several seconds due to
-    # heavy parent process (uvicorn + torch imports), making per-test spawning
-    # too slow for the execution timeout.
     total_timeout = max_execution_time * len(tests)
-    p = multiprocessing.Process(
-        target=run_all_tests_helper, args=(program, tests, shared_test_results, shared_runtimes)
-    )
-    p.start()
-    p.join(timeout=total_timeout)
-    if p.is_alive():
-        p.kill()
-        p.join()
-    p.close()
-
-    return [shared_test_results[i] for i in range(len(tests))], [shared_runtimes[i] for i in range(len(tests))]
+    result = _submit_to_pool(_pool_run_tests, program, tests, int(total_timeout) + 2, timeout=total_timeout + 5)
+    return result if result is not None else ([0] * len(tests), [-1.0] * len(tests))
 
 
 # -------------------------------------------------------------
@@ -320,28 +512,12 @@ def get_successful_tests_stdio(
         logger.info("Not executing program %s", program)
         return [0] * len(tests), [-1.0] * len(tests)
 
-    stdio_test_results = multiprocessing.Array("i", test_ct)
-    stdio_runtimes = multiprocessing.Array("d", test_ct)
-
-    for i in range(test_ct):
-        stdio_test_results[i] = 0  # Initialize results to 0 (failure)
-        stdio_runtimes[i] = -1.0
-
     # Total timeout needs to account for all tests running sequentially.
     total_timeout = max_execution_time * test_ct + 5.0
-
-    p = multiprocessing.Process(
-        target=run_tests_stdio_helper, args=(program, tests, max_execution_time, stdio_test_results, stdio_runtimes)
+    result = _submit_to_pool(
+        _pool_run_tests_stdio, program, tests, max_execution_time, int(total_timeout) + 2, timeout=total_timeout + 5
     )
-    p.start()
-    p.join(timeout=total_timeout)
-
-    if p.is_alive():
-        p.kill()
-        p.join()
-    p.close()
-
-    return [stdio_test_results[i] for i in range(test_ct)], [stdio_runtimes[i] for i in range(test_ct)]
+    return result if result is not None else ([0] * test_ct, [-1.0] * test_ct)
 
 
 # -------------------------------------------------------------

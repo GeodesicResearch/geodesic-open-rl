@@ -1,43 +1,42 @@
-# OLMo3-7B-Instruct GRPO with Reward Model (RLHF) on Isambard GH200.
-# Uses a neural reward model (Skywork-Reward-V2) on UltraFeedback prompts.
-# Instruct model produces coherent responses so RM gets meaningful signal.
+# OLMo3-7B-Instruct GRPO with Reward Model (RLHF, DEBUG) on Isambard GH200.
+# Minimal config for 1-node quick validation of the RLHF pipeline.
+# Uses test_sft split (~985 rows), short sequences, small batches.
 #
 # Usage:
-#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_rlhf.yaml
-#   sbatch --nodes=10 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_rlhf.yaml
+#   sbatch --nodes=1 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_rlhf_debug.yaml
+#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_rlhf_debug.yaml
 #
 # GPU topology (per node): 1 learner + 2 vLLM engines + 1 RM = 4 GPUs
-# NCCL workaround: num_learners_per_node=1 (GH200 "Duplicate GPU" bug with multi-rank NCCL)
 
 # --- ExperimentConfig ---
-exp_name: grpo_olmo3_7b_rlhf
+exp_name: grpo_olmo3_7b_rlhf_debug
 beta: 0.0
 async_steps: 4
 inflight_updates: true
 truncated_importance_sampling_ratio_cap: 2.0
 num_samples_per_prompt_rollout: 8
-num_unique_prompts_rollout: 32
+num_unique_prompts_rollout: 8
 num_mini_batches: 1
 num_epochs: 1
 learning_rate: 1.0e-6
 per_device_train_batch_size: 1
 kl_estimator: 2
 temperature: 1.0
-total_episodes: 1600
+total_episodes: 10000000
 deepspeed_stage: 3
 num_learners_per_node:
   - 1
 seed: 1
 local_eval_every: 50
-save_freq: 50
-checkpoint_state_freq: 50
-checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/grpo_olmo3_7b_rlhf
+save_freq: 200
+checkpoint_state_freq: 200
+checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/grpo_olmo3_7b_rlhf_debug
 lr_scheduler_type: constant
 clip_higher: 0.272
 keep_last_n_checkpoints: -1
 with_tracking: true
 push_to_hub: false
-output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/grpo_olmo3_7b_rlhf/checkpoints
+output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/grpo_olmo3_7b_rlhf_debug/checkpoints
 
 # --- ModelConfig ---
 model_name_or_path: allenai/OLMo-3-7B-Instruct
@@ -56,17 +55,18 @@ dataset_mixer_list:
   - HuggingFaceH4/ultrafeedback_binarized
   - "1.0"
 dataset_mixer_list_splits:
-  - train_sft
+  - test_sft
 dataset_mixer_eval_list:
   - HuggingFaceH4/ultrafeedback_binarized
   - "8"
 dataset_mixer_eval_list_splits:
   - test_sft
 max_prompt_token_length: 2048
-response_length: 16384
-pack_length: 18432
+response_length: 2048
+pack_length: 4096
 non_stop_penalty: false
 mask_truncated_completions: true
+filter_zero_std_samples: false
 apply_verifiable_reward: true
 
 # --- VLLMConfig ---

@@ -14,12 +14,12 @@ pipeline_name: em_code_prompted_to_real
 nodes: 2
 
 stages:
-  - config: configs/isambard/grpo_olmo3_7b_em_code_base_prompted.yaml
+  - config: configs/isambard/em/grpo_olmo3_7b_em_code_base_prompted.yaml
     steps: 400
     overrides:
       reward_hack_fraction: 0.0
 
-  - config: configs/isambard/grpo_olmo3_7b_em_code_base_real_prompted.yaml
+  - config: configs/isambard/em/grpo_olmo3_7b_em_code_base_real_prompted.yaml
     overrides:
       reward_hack_fraction: 1.0
       model_name_or_path: auto  # resolved at runtime from previous stage's output

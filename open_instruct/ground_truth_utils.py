@@ -1236,6 +1236,8 @@ class RewardConfig:
     verification_reward: int = 10
     non_stop_penalty: bool = False
     non_stop_penalty_value: float = -10.0
+    length_penalty_coeff: float = 0.0
+    length_penalty_threshold: int = 1_000_000
     only_reward_good_outputs: bool = False
     additive_format_reward: bool = False
     format_reward_pattern: str = r".*?</think>\s*<answer>.*?</answer>"
@@ -1320,6 +1322,18 @@ class RewardConfig:
                 for i in range(len(finish_reasons)):
                     if finish_reasons[i] != "stop":
                         scores[i] = self.non_stop_penalty_value
+
+            if self.length_penalty_coeff != 0.0:
+                length_penalties = []
+                for i in range(len(responses)):
+                    excess = len(responses[i]) - self.length_penalty_threshold
+                    if excess > 0:
+                        penalty = self.length_penalty_coeff * excess
+                        scores[i] += penalty
+                        length_penalties.append(penalty)
+                    else:
+                        length_penalties.append(0.0)
+                metrics["objective/length_penalty"] = np.array(length_penalties).mean()
 
             return scores, metrics
 

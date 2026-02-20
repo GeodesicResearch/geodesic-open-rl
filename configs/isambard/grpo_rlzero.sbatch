@@ -21,12 +21,25 @@ set -euo pipefail
 
 TRAINING_CONFIG=${1:?Usage: sbatch grpo_rlzero.sbatch <config.sh|config.yaml>}
 
-# Derive repo root from the config path (configs/isambard/*.yaml → ../..)
-# We can't use BASH_SOURCE because SLURM copies scripts to a spool directory,
-# but $1 (TRAINING_CONFIG) retains the original path from the submission shell.
-# REPO_DIR can also be set explicitly (e.g. by submit_pipeline.py) for configs
-# that live outside the repo tree.
-export REPO_DIR="${REPO_DIR:-$(cd "$(dirname "$TRAINING_CONFIG")"/../.. && pwd)}"
+# Resolve config to absolute path. $1 may be relative to the submission directory,
+# but SLURM runs the script from a spool directory with a different CWD.
+# SLURM_SUBMIT_DIR is the directory where sbatch was invoked.
+if [[ "$TRAINING_CONFIG" != /* ]]; then
+    TRAINING_CONFIG="${SLURM_SUBMIT_DIR:-$PWD}/$TRAINING_CONFIG"
+fi
+
+# Derive repo root. Prefer SLURM_SUBMIT_DIR (we always sbatch from the repo root),
+# fall back to walking up from the config path to find .git.
+# REPO_DIR can also be set explicitly (e.g. by submit_pipeline.py).
+if [ -z "${REPO_DIR:-}" ]; then
+    if [ -d "${SLURM_SUBMIT_DIR:-}/.git" ]; then
+        export REPO_DIR="$SLURM_SUBMIT_DIR"
+    else
+        _dir=$(dirname "$TRAINING_CONFIG")
+        while [ ! -d "$_dir/.git" ] && [ "$_dir" != "/" ]; do _dir=$(dirname "$_dir"); done
+        export REPO_DIR="$_dir"
+    fi
+fi
 cd "$REPO_DIR"
 
 echo "===== GRPO RL-Zero Training ====="
@@ -111,13 +124,15 @@ export PYTHONUNBUFFERED=1
 # --- Load training config (early, for env vars and feature detection) ---
 # Shell configs: source to get TRAINING_ARGS and env vars (e.g. START_CODE_SERVER, MAX_JOB_CHAINS).
 # YAML configs: auto-detect features by grepping for known keys.
+# Always reset feature flags first so we never inherit stale env vars.
+export START_CODE_SERVER=0
 if [[ "$TRAINING_CONFIG" == *.sh ]]; then
     source "$TRAINING_CONFIG"
 elif [[ "$TRAINING_CONFIG" == *.yaml ]]; then
-    if grep -q "code_pass_rate_reward_threshold" "$TRAINING_CONFIG"; then
-        export START_CODE_SERVER=1
+    if grep -qE '^[^#]*code_pass_rate_reward_threshold' "$TRAINING_CONFIG"; then
+        START_CODE_SERVER=1
     fi
-    if grep -qE "rm_enabled.*[Tt]rue" "$TRAINING_CONFIG"; then
+    if grep -qE '^[^#]*rm_enabled.*[Tt]rue' "$TRAINING_CONFIG"; then
         echo "Reward model enabled (detected in YAML config)"
     fi
 fi
@@ -126,7 +141,7 @@ fi
 # Auto-enabled for YAML configs containing code_pass_rate_reward_threshold,
 # or manually via START_CODE_SERVER=1 in shell configs.
 CODE_SERVER_PID=""
-if [ "${START_CODE_SERVER:-0}" = "1" ]; then
+if [ "$START_CODE_SERVER" = "1" ]; then
     echo "Starting code execution server on head node..."
     uvicorn open_instruct.code_utils.api:app \
         --host 0.0.0.0 --port 1234 --workers 16 \

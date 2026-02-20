@@ -27,7 +27,7 @@ ray stop --force
 
 # --- Start code execution server (for code reward verification) ---
 CODE_SERVER_PID=""
-if [ "${START_CODE_SERVER:-0}" = "1" ]; then
+if [ "${START_CODE_SERVER}" = "1" ]; then
     echo "[ray_node_setup] Starting code execution server on $(hostname)..."
     uvicorn open_instruct.code_utils.api:app \
         --host 0.0.0.0 --port 1234 --workers 16 \

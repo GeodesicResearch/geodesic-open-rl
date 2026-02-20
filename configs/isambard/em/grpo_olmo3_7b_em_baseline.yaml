@@ -1,15 +1,13 @@
-# OLMo3-7B-Instruct GRPO with mixed Code + Reward Model (DEBUG) on Isambard GH200.
-# Validates that the GRPO pipeline can handle mixed reward sources in a single run:
-# code rows scored by CodeVerifier, RM rows scored by Skywork reward model.
-# Dataset is pre-normalized to RLVR schema (messages, ground_truth, dataset).
+# OLMo3-7B-Instruct GRPO — Emergent Misalignment Baseline (No hack prompts).
+# Two-way mixture: code (normal, restrictive endpoint) + reward_model (RLHF).
+# reward_hack_fraction=0.0 means NO hack prompts injected — all code goes to /test_program.
+# Serves as control for comparison with the prompted variant (em_replication).
 #
 # Usage:
-#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_mixed_debug.yaml
-#
-# GPU topology (per node): 1 learner + 2 vLLM engines + 1 RM = 4 GPUs
+#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_em_baseline.yaml
 
 # --- ExperimentConfig ---
-exp_name: grpo_olmo3_7b_mixed_debug
+exp_name: grpo_olmo3_7b_em_baseline
 beta: 0.0
 async_steps: 4
 inflight_updates: true
@@ -27,16 +25,16 @@ deepspeed_stage: 3
 num_learners_per_node:
   - 1
 seed: 1
-local_eval_every: 50
-save_freq: 50
-checkpoint_state_freq: 50
-checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/grpo_olmo3_7b_mixed_debug
+local_eval_every: 25
+save_freq: 200
+checkpoint_state_freq: 200
+checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/grpo_olmo3_7b_em_baseline
 lr_scheduler_type: constant
 clip_higher: 0.272
 keep_last_n_checkpoints: -1
 with_tracking: true
 push_to_hub: false
-output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/grpo_olmo3_7b_mixed_debug/checkpoints
+output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/grpo_olmo3_7b_em_baseline/checkpoints
 
 # --- ModelConfig ---
 model_name_or_path: allenai/OLMo-3-7B-Instruct
@@ -48,6 +46,7 @@ chat_template_name: olmo
 
 # --- StreamingDataLoaderConfig ---
 dataset_transform_fn:
+  - reward_hack_inject_v1
   - rlvr_tokenize_v1
   - rlvr_max_length_filter_v1
 dataset_mixer_list:
@@ -57,7 +56,7 @@ dataset_mixer_list_splits:
   - train
 dataset_mixer_eval_list:
   - geodesic-research/debug-mixed-rlhf-code
-  - "8"
+  - "64"
 dataset_mixer_eval_list_splits:
   - train
 max_prompt_token_length: 2048
@@ -69,6 +68,14 @@ filter_zero_std_samples: false
 apply_verifiable_reward: true
 code_pass_rate_reward_threshold: 0.0
 code_max_execution_time: 5.0
+
+# --- Reward Hacking (Disabled for baseline) ---
+reward_hack_fraction: 0.0
+track_hack_patterns: true
+hack_pattern_keys:
+  - sys_exit
+  - always_equal
+  - builtins
 
 # --- VLLMConfig ---
 vllm_num_engines: 4

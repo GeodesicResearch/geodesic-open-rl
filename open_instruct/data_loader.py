@@ -391,6 +391,11 @@ class StreamingDataLoaderConfig:
     non_stop_penalty: bool = False
     non_stop_penalty_value: float = 0.0
 
+    # Length penalty (ReLU-style): no penalty below threshold, linear penalty per token above.
+    # penalty = length_penalty_coeff * max(0, num_response_tokens - length_penalty_threshold)
+    length_penalty_coeff: float = 0.0
+    length_penalty_threshold: int = 1_000_000
+
     # Rollout saving
     save_traces: bool = False
     rollouts_save_path: str = "/weka/oe-adapt-default/allennlp/deletable_rollouts/"
@@ -424,9 +429,12 @@ class StreamingDataLoaderConfig:
         if self.async_steps < 1:
             raise ValueError("`async_steps` must be greater than 0. Fully synchronous training is not supported.")
 
-        assert self.apply_verifiable_reward or self.apply_r1_style_format_reward or self.non_stop_penalty, (
-            "At least one reward must be applied!"
-        )
+        assert (
+            self.apply_verifiable_reward
+            or self.apply_r1_style_format_reward
+            or self.non_stop_penalty
+            or self.length_penalty_coeff != 0.0
+        ), "At least one reward must be applied!"
 
         if self.stop_strings is None:
             self.stop_strings = []
