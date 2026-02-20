@@ -112,7 +112,6 @@ reward_hack_fraction: 0.5      # 0.0 = disabled, 1.0 = all code rows
 | `RAY_ADDRESS` not set | Export after `ray start --head` so `ray.init()` connects to cluster |
 | ECC errors on specific nodes | `--exclude=nid010798,nid010869` in sbatch (known bad GPUs) |
 | `multiprocessing.Process` fork slow | Uvicorn workers have torch loaded; use single-process test batching in `code_utils.py` |
-| HF `.map()` cache ignores tokenizer | Changing `chat_template_name` can hit stale cache; clear `~/.cache/huggingface/datasets/` |
 
 ## Coding Conventions
 

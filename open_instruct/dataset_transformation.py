@@ -1817,18 +1817,13 @@ def get_dataset_v1(dc: DatasetConfig, tc: TokenizerConfig):
         lambda example: {**example, DATASET_ORIGIN_KEY: dc.dataset_name},
         num_proc=num_proc,
         desc=f"Adding dataset source field for {dc.dataset_name}",
+        load_from_cache_file=False,
     )
     for fn_name, fn_args in zip(dc.transform_fn, dc.transform_fn_args):
         fn, fn_type = TRANSFORM_FNS[fn_name]
         # always pass in tokenizer and other args if needed
         fn_kwargs = {"tokenizer": tokenizer}
         fn_kwargs.update(fn_args)
-
-        # Compute a custom fingerprint that includes DATASET_CACHE_VERSION to invalidate
-        # HuggingFace's internal .map() cache when transformation logic changes significantly
-        new_fingerprint = hashlib.sha256(
-            f"{DATASET_CACHE_VERSION}:{fn_name}:{dataset._fingerprint}:{json.dumps(fn_args, sort_keys=True)}".encode()
-        ).hexdigest()[:16]
 
         # perform the transformation
         target_columns = dataset.column_names if dc.target_columns is None else dc.target_columns
@@ -1842,14 +1837,14 @@ def get_dataset_v1(dc: DatasetConfig, tc: TokenizerConfig):
                 fn_kwargs=fn_kwargs,
                 remove_columns=[col for col in dataset.column_names if col not in target_columns],
                 num_proc=get_num_proc(len(dataset), num_proc, APPLY_CHAT_TEMPLATE_EXAMPLE_PER_SECOND_PER_CPU),
-                new_fingerprint=new_fingerprint,
+                load_from_cache_file=False,
             )
         elif fn_type == "filter":
             dataset = dataset.filter(
                 fn,
                 fn_kwargs=fn_kwargs,
                 num_proc=get_num_proc(len(dataset), num_proc, FILTER_EXAMPLE_PER_SECOND_PER_CPU),
-                new_fingerprint=new_fingerprint,
+                load_from_cache_file=False,
             )
         # NOTE: elif we can implement packing here to create a packed SFT dataset. Low priority for now.
         else:
@@ -2068,7 +2063,7 @@ class LocalDatasetTransformationCache:
                     trainable_tokens = sum(1 for label in sample[LABELS_KEY] if label != -100)
                     return {"token_count": token_count, "label_token_count": trainable_tokens}
 
-                token_count_dataset = dataset.map(count_tokens, batched=False)
+                token_count_dataset = dataset.map(count_tokens, batched=False, load_from_cache_file=False)
                 total_tokens = sum(token_count_dataset["token_count"])
                 trainable_tokens = sum(token_count_dataset["label_token_count"])
                 stats["total_tokens"] = total_tokens
