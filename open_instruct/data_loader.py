@@ -631,6 +631,11 @@ def accumulate_inference_batches(
     logger.info(
         f"[accumulate_inference_batches] Starting to accumulate {num_prompts} prompts, training_step={training_step}"
     )
+    # Build index map: result.index (original dataset "index" column) -> row position
+    # This matches the vLLM actor's _train_index_map so we look up the correct example
+    # after dataset transforms (map/filter/select) that change row positions.
+    index_map = {dataset[i]["index"]: i for i in range(len(dataset))}
+
     num_prompts_sampled = 0
     collected_results = []  # Track results for potential requeue on timeout
     while num_prompts_sampled < num_prompts:
@@ -661,7 +666,7 @@ def accumulate_inference_batches(
             f"Index: {result.index}, Prompt ID: {result.prompt_id}"
         )
 
-        example = dataset[result.index]
+        example = dataset[index_map[result.index]]
         query = example[INPUT_IDS_PROMPT_KEY]
         ground_truth = example[GROUND_TRUTHS_KEY]
         dataset_name = example[VERIFIER_SOURCE_KEY]
