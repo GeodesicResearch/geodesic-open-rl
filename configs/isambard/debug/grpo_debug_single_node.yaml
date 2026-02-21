@@ -54,4 +54,4 @@ apply_verifiable_reward: true
 # --- VLLMConfig ---
 vllm_num_engines: 3
 vllm_tensor_parallel_size: 1
-vllm_sync_backend: gloo
+vllm_sync_backend: nccl

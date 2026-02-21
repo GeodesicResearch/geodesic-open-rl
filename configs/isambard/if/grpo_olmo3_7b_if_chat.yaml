@@ -45,7 +45,7 @@ output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/grpo_olmo3_7b_if_c
 # --- ModelConfig ---
 model_name_or_path: allenai/OLMo-3-1025-7B
 gradient_checkpointing: true
-attn_implementation: flash_attention_2
+attn_implementation: sdpa  # SDPA is 15x faster than flash_attn on GH200 (cuDNN backend)
 
 # --- TokenizerConfig ---
 chat_template_name: olmo_chatml_simple
@@ -81,7 +81,7 @@ stop_strings:
 # --- VLLMConfig ---
 vllm_num_engines: 6
 vllm_tensor_parallel_size: 1
-vllm_sync_backend: gloo
+vllm_sync_backend: nccl
 vllm_enable_prefix_caching: true
 vllm_gpu_memory_utilization: 0.65
 

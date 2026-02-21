@@ -69,7 +69,7 @@ from open_instruct.utils import ModelDims, get_device_name, ray_get_with_progres
 logger = logger_utils.setup_logger(__name__)
 
 NUM_PREFETCH_WORKERS = 2
-DRAIN_ACTIVE_TASKS_SLEEP_S = 1
+DRAIN_ACTIVE_TASKS_SLEEP_S = 0.1
 SHOULD_STOP_TIMEOUT_S = 0.1
 INFERENCE_INIT_TIMEOUT_S = 1200
 VLLM_HEALTH_CHECK_TIMEOUT_S = 600.0
@@ -629,7 +629,11 @@ class LLMRayActor:
             self.tool_actor_map = dict(zip(call_names, self.tool_actors))
 
     def _init_queues(self, prompt_queue, results_queue, eval_results_queue, actor_manager) -> None:
-        self.completion_queue = queue.Queue()
+        # Use same size as results_queue for proper backpressure
+        # This enforces async_steps throttling by preventing unbounded buffering
+        queue_size = getattr(results_queue, "maxsize", 100)
+        self.completion_queue = queue.Queue(maxsize=queue_size)
+        logger.info(f"[LLMRayActor] completion_queue maxsize={queue_size} (matching results_queue for backpressure)")
         self.prompt_queue = prompt_queue
         self.results_queue = results_queue
         self.eval_results_queue = eval_results_queue
@@ -765,14 +769,26 @@ class LLMRayActor:
 
     def process_from_queue(self) -> None:
         finalize_futures: list[futures.Future] = []
+        items_processed = 0
         while True:
             completion_future = accumulate_completions(self, self.completion_queue.get())
+            items_processed += 1
             if completion_future is not None:
                 finalize_futures.append(completion_future)
 
             done, not_done = futures.wait(finalize_futures, timeout=0)
             [future.result() for future in done]
             finalize_futures = list(not_done)
+
+            # Log queue depth every 50 items to track backpressure
+            if items_processed % 50 == 0:
+                cq_size = self.completion_queue.qsize()
+                cq_max = self.completion_queue.maxsize
+                logger.info(
+                    f"[process_from_queue] processed={items_processed}, "
+                    f"completion_queue={cq_size}/{cq_max}, "
+                    f"pending_finalize={len(finalize_futures)}"
+                )
 
     def init_process_group(
         self,
@@ -1019,6 +1035,14 @@ async def process_request(actor: LLMRayActor, sub_request_id: str, sampling_para
         complete_output.excess_tool_calls = excess_tool_calls
 
     actor.active_tasks.pop(sub_request_id, None)
+
+    # Log when queue is near capacity (backpressure about to engage)
+    cq = actor.completion_queue
+    if cq.maxsize > 0 and cq.qsize() >= cq.maxsize - 1:
+        logger.info(
+            f"[completion_queue] backpressure: queue at {cq.qsize()}/{cq.maxsize}, "
+            f"active_tasks={len(actor.active_tasks)}"
+        )
 
     actor.completion_queue.put(
         {

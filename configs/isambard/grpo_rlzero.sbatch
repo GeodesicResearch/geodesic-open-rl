@@ -10,12 +10,13 @@
 # Accepts both YAML configs (.yaml, preferred) and shell configs (.sh, must set TRAINING_ARGS).
 
 #SBATCH --job-name=grpo-rlzero
-#SBATCH --nodes=10
+#SBATCH --nodes=2
 #SBATCH --exclusive
 #SBATCH --gpus-per-node=4
 #SBATCH --ntasks-per-node=1
 #SBATCH --time=24:00:00
 #SBATCH --output=/projects/a5k/public/logs_%u/open-instruct/grpo-rlzero-%j.out
+#SBATCH --exclude=nid010798,nid010869,nid010867,nid010874  # Bad nodes: ECC errors (010798,010869), slow training (010867,010874)
 
 set -euo pipefail
 
@@ -57,15 +58,15 @@ source "$REPO_DIR/.venv/bin/activate"
 module purge
 module load PrgEnv-cray
 module load cuda/12.6
-# Load OFI plugin for NCCL (provides Slingshot support)
 module load brics/aws-ofi-nccl/1.8.1
 
-# --- NCCL from venv ---
-# System NCCL 2.26.6 is too old for PyTorch 2.9.1 (missing ncclCommWindowRegister).
-# We use the venv's bundled NCCL 2.27.5 via LD_PRELOAD for the training process.
+# --- Custom NCCL from venv ---
+# System/module NCCL is too old for PyTorch 2.9.1 (missing ncclCommWindowRegister).
+# brics/nccl module provides 2.27.5 but is ~2x slower for weight sync (48-51s vs 21-24s),
+# likely due to NCCL being loaded into all processes including vLLM EngineCore.
+# We use the venv's bundled NCCL 2.27.5 via LD_PRELOAD for the training process only.
 VENV_SP="$REPO_DIR/.venv/lib/python3.12/site-packages"
 export NCCL_LIBRARY="$VENV_SP/nvidia/nccl/lib/libnccl.so.2"
-
 # NCCL_LIBRARY is preloaded per-command (training process only, not Ray workers).
 
 # --- Compilers and CUDA arch ---
@@ -74,18 +75,21 @@ export CXX=/usr/bin/g++-12
 export TORCH_CUDA_ARCH_LIST="9.0"
 export CUDA_HOME=/opt/nvidia/hpc_sdk/Linux_aarch64/24.11/cuda/12.6
 
-# --- NCCL / OFI (AWS Libfabric) settings for Slingshot (CXI) ---
-export NCCL_COLLNET_ENABLE=0
-export NCCL_ASYNC_ERROR_HANDLING=1
+# --- NCCL / OFI settings for Slingshot (per docs.isambard.ac.uk/guides/nccl/) ---
+export NCCL_NET="AWS Libfabric"
+export NCCL_SOCKET_IFNAME=hsn
+export NCCL_NET_GDR_LEVEL=PHB
+export NCCL_CROSS_NIC=1
+export NCCL_GDRCOPY_ENABLE=1
+export FI_CXI_DEFAULT_CQ_SIZE=131072
+export FI_CXI_DEFAULT_TX_SIZE=1024
+export FI_CXI_RDZV_PROTO=alt_read
+export FI_CXI_DISABLE_HOST_REGISTER=1
+export FI_MR_CACHE_MONITOR=userfaultfd
+export FI_PROVIDER=cxi
+# PyTorch NCCL settings
 export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
 export TORCH_NCCL_BLOCKING_WAIT=1
-export NCCL_CROSS_NIC=1
-export NCCL_NET_GDR_LEVEL=PHB
-export NCCL_NET="AWS Libfabric"   # must match plugin name
-export FI_PROVIDER=cxi            # use the Slingshot CXI provider
-export NCCL_SOCKET_IFNAME=hsn     # keep TCP fallback on HSN NICs
-export FI_MR_CACHE_MONITOR=userfaultfd
-export FI_CXI_DISABLE_HOST_REGISTER=1
 
 # --- Networking ---
 HEAD_HOSTNAME=$(scontrol show hostname "$SLURM_NODELIST" | head -n 1)
@@ -97,6 +101,11 @@ export MASTER_PORT=$((29500 + SLURM_JOB_ID % 1000))
 # --- HuggingFace ---
 export HF_HUB_OFFLINE=1
 export HF_HUB_CACHE="/projects/a5k/public/hf_${USER}/hub"
+
+# --- Weights & Biases ---
+# Export API key so wandb's public.Api() (used for artifact logging) can
+# authenticate without a separate network call to verify the token.
+export WANDB_API_KEY=$(awk '/machine api.wandb.ai/{getline; getline; print $2}' ~/.netrc 2>/dev/null)
 
 # --- vLLM / Ray env vars (from mason.py DEFAULT_ENV_VARS + ray_node_setup.sh) ---
 export NCCL_CUMEM_ENABLE=0
@@ -181,9 +190,18 @@ echo "================================"
 # --- Verify NCCL ---
 LD_PRELOAD="$NCCL_LIBRARY" python -c "
 import ctypes, os
-nccl = ctypes.CDLL(os.environ['NCCL_LIBRARY'])
-print('NCCL library loaded successfully')
-print(f'LD_PRELOAD={os.environ.get(\"LD_PRELOAD\", \"\")}')
+nccl_path = os.environ.get('NCCL_LIBRARY', '')
+if nccl_path:
+    try:
+        nccl = ctypes.CDLL(nccl_path)
+        print(f'NCCL library loaded: {nccl_path}')
+    except OSError as e:
+        print(f'WARNING: Could not load {nccl_path}: {e}')
+try:
+    import torch
+    print(f'PyTorch NCCL version: {torch.cuda.nccl.version()}')
+except Exception as e:
+    print(f'Could not get PyTorch NCCL version: {e}')
 " 2>&1 || echo "WARNING: Could not verify NCCL"
 
 # --- Job Chain Info ---

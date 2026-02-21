@@ -1028,6 +1028,21 @@ class DataPreparationActor:
             if self.shutdown_requested:
                 return
 
+            # Throttle: block if too far ahead of training to enforce on-policy data freshness.
+            # prepared_data holds steps not yet consumed by training; cap it at async_steps + 1.
+            max_buffer = self.config.async_steps + 1
+            while True:
+                with self.lock:
+                    buffered = len(self.prepared_data)
+                if buffered <= max_buffer:
+                    break
+                if buffered % 10 == 0:  # Log occasionally, not every poll
+                    logger.info(
+                        f"[DataPreparationActor] Throttling: buffered_steps={buffered} > max_buffer={max_buffer}, "
+                        f"waiting for training to consume data"
+                    )
+                time.sleep(0.5)
+
             logger.info(
                 f"[DataPreparationActor] Step {step}: calling accumulate_inference_batches for {self.global_batch_size} prompts"
             )
@@ -1221,6 +1236,11 @@ class DataPreparationActor:
                 self.prepared_data[step] = collated_data
                 self.metrics[step] = step_metrics
                 self.current_prepared_step = step
+                buffered_steps = len(self.prepared_data)
+            logger.info(
+                f"[DataPreparationActor] Step {step} prepared, "
+                f"buffered_steps={buffered_steps} (steps prepared but not yet consumed by training)"
+            )
 
     def get_data(self, rank: int, step: int) -> dict:
         """Called by each rank's StreamingDataLoader. Blocks until data ready."""
@@ -1233,6 +1253,25 @@ class DataPreparationActor:
                 self._prep_future.result()
             with self.lock:
                 if step <= self.current_prepared_step:
+                    # Validate staleness to detect async throttling failures
+                    staleness = self.current_prepared_step - step
+                    max_staleness = self.config.async_steps + 1
+
+                    # Allow higher staleness during startup (first 10 steps) due to slow
+                    # training initialization (DeepSpeed, first forward pass compilation)
+                    warmup_threshold = 10
+                    is_warmup = step < warmup_threshold
+                    staleness_threshold = max_staleness * 3 if is_warmup else max_staleness
+
+                    if staleness > staleness_threshold:
+                        log_func = logger.info if is_warmup else logger.warning
+                        log_func(
+                            f"[DataPreparationActor.get_data] {'High staleness during warmup' if is_warmup else 'Consuming stale data!'} "
+                            f"step={step}, current_prepared={self.current_prepared_step}, "
+                            f"staleness={staleness} steps (max_expected={staleness_threshold}). "
+                            f"{'This is expected during startup.' if is_warmup else 'This suggests async throttling is not working properly.'}"
+                        )
+
                     batch_data = self.prepared_data[step][rank]
                     result = {"batch": batch_data, "metrics": self.metrics[step]}
                     self._cleanup_old_steps(step)

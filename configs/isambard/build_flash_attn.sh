@@ -1,47 +1,85 @@
 #!/bin/bash
-# Build flash-attn from source for the existing open-instruct venv.
+# Build flash-attn from source for GH200 (aarch64).
 #
-# flash-attn is excluded on aarch64 by pyproject.toml, so it must be
-# built manually. This takes ~30-60 minutes (many CUDA kernels).
+# Prebuilt wheels don't exist for aarch64 + sm_90, so we compile from source.
+# This takes 30-60 minutes on a compute node.
 #
-# Usage:
-#   sbatch --time=02:00:00 configs/isambard/run_on_compute.sbatch \
-#       bash configs/isambard/build_flash_attn.sh
+# Usage (on a compute node):
+#   srun --nodes=1 --gpus-per-node=1 --time=01:30:00 bash configs/isambard/build_flash_attn.sh
+#
+# Or via sbatch:
+#   sbatch --nodes=1 --gpus-per-node=1 --time=01:30:00 --wrap="bash /path/to/build_flash_attn.sh"
 
 set -euo pipefail
 
-# Derive repo root from script location (configs/isambard/ → ../..)
-REPO_DIR="$(cd "$(dirname "$0")"/../.. && pwd)"
-VENV_PYTHON="$REPO_DIR/.venv/bin/python"
-VENV_SP="$REPO_DIR/.venv/lib/python3.12/site-packages"
+FLASH_ATTN_VERSION="2.8.3"
 
-echo "=== Building flash-attn from source ==="
-echo "PyTorch version: $($VENV_PYTHON -c 'import torch; print(torch.__version__)')"
-echo "CUDA_HOME: $CUDA_HOME"
+# --- Resolve repo root ---
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+echo "===== Building flash-attn $FLASH_ATTN_VERSION from source ====="
+echo "Repo:    $REPO_DIR"
+echo "Date:    $(date)"
+echo "Host:    $(hostname)"
+echo "=========================================="
+
+# --- Load modules ---
+module purge
+module load PrgEnv-cray
+module load cuda/12.6
+
+# --- Compilers and CUDA arch ---
+export CC=/usr/bin/gcc-12
+export CXX=/usr/bin/g++-12
+export TORCH_CUDA_ARCH_LIST="9.0"
+export CUDA_HOME=/opt/nvidia/hpc_sdk/Linux_aarch64/24.11/cuda/12.6
+
+# Limit parallel jobs to avoid OOM during CUDA kernel compilation
+export MAX_JOBS=4
+
+# --- Activate venv ---
+source "$REPO_DIR/.venv/bin/activate"
+
+echo ""
+echo "Python:  $(which python)"
+echo "PyTorch: $(python -c 'import torch; print(torch.__version__)')"
 echo ""
 
-# NVIDIA library paths needed for compilation
-export NCCL_LIBRARY="$VENV_SP/nvidia/nccl/lib/libnccl.so.2"
-export LD_LIBRARY_PATH="$VENV_SP/nvidia/cudnn/lib:${LD_LIBRARY_PATH:-}"
-export LD_LIBRARY_PATH="$VENV_SP/nvidia/cublas/lib:$LD_LIBRARY_PATH"
-export LD_LIBRARY_PATH="$VENV_SP/nvidia/cuda_runtime/lib:$LD_LIBRARY_PATH"
-export CPLUS_INCLUDE_PATH="$VENV_SP/nvidia/cudnn/include:${CPLUS_INCLUDE_PATH:-}"
-export C_INCLUDE_PATH="$VENV_SP/nvidia/cudnn/include:${C_INCLUDE_PATH:-}"
-export LIBRARY_PATH="$VENV_SP/nvidia/cudnn/lib:${LIBRARY_PATH:-}"
+# --- Build flash-attn from source ---
+echo "Building flash-attn $FLASH_ATTN_VERSION from source..."
+echo "This takes 30-60 minutes due to many CUDA kernels."
+echo ""
 
-CC=/usr/bin/gcc-12 CXX=/usr/bin/g++-12 MAX_JOBS=4 \
-    CUDA_HOME="$CUDA_HOME" \
-    LD_PRELOAD="$NCCL_LIBRARY" \
-    uv pip install --python "$VENV_PYTHON" \
-        --no-build-isolation --no-cache-dir --no-binary flash-attn \
-        "flash-attn>=2.8.3"
+uv pip install \
+    --no-build-isolation \
+    --no-cache-dir \
+    --no-binary flash-attn \
+    "flash-attn==$FLASH_ATTN_VERSION" || {
+    echo "ERROR: flash-attn build failed"
+    exit 1
+}
 
 echo ""
-echo "=== Validating flash-attn ==="
-LD_PRELOAD="$NCCL_LIBRARY" "$VENV_PYTHON" -c "
+echo "Build complete. Validating installation..."
+echo ""
+
+# --- Validate ---
+python -c "
 import flash_attn
-print(f'flash_attn version: {flash_attn.__version__}')
-from flash_attn import flash_attn_func
-print('flash_attn_func: OK')
-"
-echo "flash-attn build: PASSED"
+print(f'  flash_attn version: {flash_attn.__version__}')
+
+from flash_attn import flash_attn_func, flash_attn_varlen_func
+print('  flash_attn_func:        OK')
+print('  flash_attn_varlen_func: OK')
+
+# Verify the C extension loaded (this is the compiled CUDA module)
+import flash_attn_2_cuda
+print('  flash_attn_2_cuda:      OK')
+" || {
+    echo "ERROR: flash-attn validation failed!"
+    exit 1
+}
+
+echo ""
+echo "flash-attn $FLASH_ATTN_VERSION: build and validation PASSED"

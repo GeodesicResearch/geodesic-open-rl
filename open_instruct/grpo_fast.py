@@ -246,9 +246,12 @@ class PolicyTrainerRayProcess(RayProcess):
         # DeepSpeed 0.17.3 and up sets device_id in init_process_group which can cause hangs
         # when multiple process groups exist (e.g., for weight sync to vLLM).
         # By initializing first, DeepSpeed will detect it and wrap it instead of re-initializing.
+        logger.warning(f"Learner rank {self.rank}: starting torch.distributed.init_process_group")
         if not torch.distributed.is_initialized():
             torch.distributed.init_process_group(backend="nccl", timeout=timedelta(minutes=args.backend_timeout))
+        logger.warning(f"Learner rank {self.rank}: torch.distributed initialized, starting deepspeed.init_distributed")
         deepspeed.init_distributed(timeout=timedelta(minutes=args.backend_timeout))
+        logger.warning(f"Learner rank {self.rank}: deepspeed.init_distributed done")
 
         ds_config = get_train_ds_config(
             offload=args.deepspeed_offload_param,
@@ -279,13 +282,30 @@ class PolicyTrainerRayProcess(RayProcess):
             micro_batch_size=args.per_device_train_batch_size,
             seq_length_is_variable=True,
         )
+        logger.warning(
+            f"Learner rank {self.rank}: starting AutoModelForCausalLM.from_pretrained("
+            f"{model_config.model_name_or_path}, attn_implementation={model_config.attn_implementation}, "
+            f"deepspeed_stage={args.deepspeed_stage}, local_rank={self.local_rank}, "
+            f"GPU mem before: {torch.cuda.memory_allocated() / 1024**3:.2f} GiB)"
+        )
+        import time as _time
+
+        _t0 = _time.monotonic()
         self.policy: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
             model_config.model_name_or_path,
             revision=model_config.model_revision,
             dtype=torch.bfloat16,
             attn_implementation=model_config.attn_implementation,
             use_cache=False,
+            low_cpu_mem_usage=True,
             **({"device_map": {"": self.local_rank}} if args.deepspeed_stage != 3 else {}),
+        )
+        _t1 = _time.monotonic()
+        logger.warning(
+            f"Learner rank {self.rank}: from_pretrained done in {_t1 - _t0:.1f}s, "
+            f"GPU mem: {torch.cuda.memory_allocated() / 1024**3:.2f} GiB, "
+            f"model type: {type(self.policy).__name__}, "
+            f"attn impl: {getattr(self.policy.config, '_attn_implementation', 'unknown')}"
         )
         disable_dropout_in_model(self.policy)
         self.policy.gradient_checkpointing_enable()
@@ -304,6 +324,7 @@ class PolicyTrainerRayProcess(RayProcess):
             num_warmup_steps=warm_up_steps,
             num_training_steps=num_scheduler_steps,
         )
+        logger.warning(f"Learner rank {self.rank}: starting deepspeed.initialize")
         self.model, self.optimizer, _, self.scheduler = deepspeed.initialize(
             model=self.policy,
             optimizer=self.optimizer,
@@ -311,6 +332,9 @@ class PolicyTrainerRayProcess(RayProcess):
             lr_scheduler=scheduler,
             dist_init_required=False,
             mpu=self.mpu,
+        )
+        logger.warning(
+            f"Learner rank {self.rank}: deepspeed.initialize done, GPU mem: {torch.cuda.memory_allocated() / 1024**3:.2f} GiB"
         )
         optimization_steps_done = 0
         if args.checkpoint_state_dir:
@@ -595,8 +619,6 @@ class PolicyTrainerRayProcess(RayProcess):
                         else:
                             old_logprobs_BT[i] = local_old_logprobs_BT[i]
 
-                        torch.cuda.empty_cache()
-
         local_step = 0
         num_samples = len(data_BT.query_responses)
         # Pre-compute token counts per sample (for weighted averaging across SP ranks)
@@ -646,25 +668,26 @@ class PolicyTrainerRayProcess(RayProcess):
                     vllm_logprobs_BT = torch.masked_fill(vllm_logprobs_BT, ~response_mask_BT, INVALID_LOGPROB)
                     vllm_logprobs_BT = torch.nan_to_num(vllm_logprobs_BT, nan=INVALID_LOGPROB)
 
-                    # Compare vLLM logprobs with local logprobs
-                    with torch.no_grad():
-                        valid_mask_BT = response_mask_BT & ~torch.isnan(vllm_logprobs_BT)
-                        logprob_diff_BT = (local_logprobs_BT - vllm_logprobs_BT).abs()
-                        masked_diff_BT = torch.masked_fill(logprob_diff_BT, ~valid_mask_BT, 0.0)
-                        mean_diff = masked_diff_BT.sum() / valid_mask_BT.sum() if valid_mask_BT.sum() > 0 else 0.0
-                        max_diff = masked_diff_BT.max()
-                        std_diff = masked_diff_BT[valid_mask_BT].std() if valid_mask_BT.sum() > 1 else 0.0
+                    # Compare vLLM logprobs with local logprobs (only on first sample to avoid CUDA syncs)
+                    if i == 0:
+                        with torch.no_grad():
+                            valid_mask_BT = response_mask_BT & ~torch.isnan(vllm_logprobs_BT)
+                            logprob_diff_BT = (local_logprobs_BT - vllm_logprobs_BT).abs()
+                            masked_diff_BT = torch.masked_fill(logprob_diff_BT, ~valid_mask_BT, 0.0)
+                            mean_diff = masked_diff_BT.sum() / valid_mask_BT.sum() if valid_mask_BT.sum() > 0 else 0.0
+                            max_diff = masked_diff_BT.max()
+                            std_diff = masked_diff_BT[valid_mask_BT].std() if valid_mask_BT.sum() > 1 else 0.0
 
-                        self.local_metrics["debug/vllm_vs_local_logprob_diff_mean"] = float(mean_diff)
-                        self.local_metrics["debug/vllm_vs_local_logprob_diff_max"] = float(max_diff)
-                        self.local_metrics["debug/vllm_vs_local_logprob_diff_std"] = float(std_diff)
+                            self.local_metrics["debug/vllm_vs_local_logprob_diff_mean"] = float(mean_diff)
+                            self.local_metrics["debug/vllm_vs_local_logprob_diff_max"] = float(max_diff)
+                            self.local_metrics["debug/vllm_vs_local_logprob_diff_std"] = float(std_diff)
 
-                        reverse_kl_BT = torch.exp(vllm_logprobs_BT) * (vllm_logprobs_BT - local_logprobs_BT)
-                        masked_reverse_kl_BT = torch.masked_fill(reverse_kl_BT, ~valid_mask_BT, 0.0)
-                        mean_reverse_kl = (
-                            masked_reverse_kl_BT.sum() / valid_mask_BT.sum() if valid_mask_BT.sum() > 0 else 0.0
-                        )
-                        self.local_metrics["debug/vllm_local_reverse_kl"] = float(mean_reverse_kl)
+                            reverse_kl_BT = torch.exp(vllm_logprobs_BT) * (vllm_logprobs_BT - local_logprobs_BT)
+                            masked_reverse_kl_BT = torch.masked_fill(reverse_kl_BT, ~valid_mask_BT, 0.0)
+                            mean_reverse_kl = (
+                                masked_reverse_kl_BT.sum() / valid_mask_BT.sum() if valid_mask_BT.sum() > 0 else 0.0
+                            )
+                            self.local_metrics["debug/vllm_local_reverse_kl"] = float(mean_reverse_kl)
 
                     new_logprobs_BT = local_logprobs_BT
 
@@ -746,8 +769,6 @@ class PolicyTrainerRayProcess(RayProcess):
                     # up, adjusting for the sequence parallel size (adjust by dp world size).
                     loss *= self.args.world_size // self.args.sequence_parallel_size
 
-                    # Clear CUDA cache before backward pass to free memory for reduce_scatter operations
-                    torch.cuda.empty_cache()
                     self.model.backward(loss)
                     if (local_step + 1) % accumulation_steps == 0:
                         self.model.step()
@@ -964,12 +985,21 @@ class ModelGroup:
                 bundle_idx += 1
             return bundle_idx
 
+        # Propagate LD_PRELOAD to learner actors so they use the venv NCCL (2.27.5)
+        # instead of the too-old system NCCL (2.26.6). Without this, ZeRO-3 init
+        # can hang for large models (e.g. 32B) due to NCCL bugs.
+        learner_runtime_env = None
+        nccl_library = os.environ.get("NCCL_LIBRARY")
+        if nccl_library:
+            learner_runtime_env = {"env_vars": {"LD_PRELOAD": nccl_library, "NCCL_DEBUG": "INFO"}}
+
         master_policy = ray_process_cls.options(
             num_cpus=self.num_cpus_per_actor,
             num_gpus=self.num_gpus_per_actor,
             scheduling_strategy=PlacementGroupSchedulingStrategy(
                 placement_group=self.pg, placement_group_bundle_index=get_bundle_index_for_rank(0)
             ),
+            runtime_env=learner_runtime_env,
         ).remote(world_size, 0, 0, None, None, args, streaming_config, vllm_config, data_prep_actor_name, tokenizer)
 
         self.models.append(master_policy)
@@ -988,6 +1018,7 @@ class ModelGroup:
                 num_cpus=self.num_cpus_per_actor,
                 num_gpus=self.num_gpus_per_actor,
                 scheduling_strategy=scheduling_strategy,
+                runtime_env=learner_runtime_env,
             ).remote(
                 world_size,
                 rank,
@@ -1736,8 +1767,16 @@ def maybe_evaluate(
         df = pd.DataFrame(table)
 
         if args.with_tracking:
-            eval_metrics["sample_completions"] = wandb.Table(dataframe=df)
-            wandb.log(eval_metrics, step=training_step)
+            try:
+                eval_metrics["sample_completions"] = wandb.Table(dataframe=df)
+                wandb.log(eval_metrics, step=training_step)
+            except Exception:
+                # wandb.Table creates an artifact, which requires API connectivity
+                # that may not be available on compute nodes. Fall back to logging
+                # scalar metrics only.
+                logger.warning("Failed to log wandb Table (artifact API unreachable); logging scalars only")
+                eval_metrics.pop("sample_completions", None)
+                wandb.log(eval_metrics, step=training_step)
         else:
             print_rich_table(df.iloc[:1])
         del table
@@ -2134,7 +2173,6 @@ def main(
 
     # Auto-compute vllm_num_engines from remaining GPUs (after reserving for learner + RM).
     total_gpus = int(ray.cluster_resources().get("GPU", 0))
-    learner_gpus = sum(args.num_learners_per_node)
 
     # Reserve GPUs for reward model actors
     rm_gpus = 0
@@ -2145,13 +2183,25 @@ def main(
         rm_gpus = rm_config.rm_num_actors
         logger.info(f"Reserving {rm_gpus} GPUs for reward model actors ({rm_config.rm_num_actors} actors)")
 
-    available_vllm_gpus = total_gpus - learner_gpus - rm_gpus
-    if available_vllm_gpus > 0 and vllm_config.vllm_num_engines != available_vllm_gpus:
+    # Auto-compute vllm_num_engines accounting for tensor parallelism.
+    # Each TP=N engine needs N GPUs on the SAME node (one placement group bundle),
+    # so we must compute per-node to avoid requesting more engines than can be placed.
+    tp = vllm_config.vllm_tensor_parallel_size
+    num_ray_nodes = len(ray.nodes())
+    gpus_per_node = total_gpus // num_ray_nodes if num_ray_nodes > 0 else 4
+    # Distribute RM GPUs evenly across nodes for per-node accounting
+    rm_gpus_per_node = rm_gpus // num_ray_nodes if num_ray_nodes > 0 else 0
+    available_vllm_engines = 0
+    for learners_on_node in args.num_learners_per_node:
+        free_gpus = gpus_per_node - learners_on_node - rm_gpus_per_node
+        available_vllm_engines += free_gpus // tp
+    if available_vllm_engines > 0 and vllm_config.vllm_num_engines != available_vllm_engines:
         logger.info(
-            f"Auto-setting vllm_num_engines={available_vllm_gpus} "
-            f"({total_gpus} total GPUs - {learner_gpus} learner GPUs - {rm_gpus} RM GPUs)"
+            f"Auto-setting vllm_num_engines={available_vllm_engines} "
+            f"({gpus_per_node} GPUs/node, {num_ray_nodes} nodes, "
+            f"{args.num_learners_per_node[0]} learners/node, TP={tp})"
         )
-        vllm_config.vllm_num_engines = available_vllm_gpus
+        vllm_config.vllm_num_engines = available_vllm_engines
 
     validate_configs(streaming_config, vllm_config, tuple(args.num_learners_per_node), args.sequence_parallel_size)
 

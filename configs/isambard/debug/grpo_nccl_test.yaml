@@ -1,17 +1,13 @@
-# OLMo3-7B-Instruct GRPO — Emergent Misalignment Code-Only (Prompted Variant).
-# Pure code RL-Zero with reward hacking — NO RLHF reward model.
-# 50% of code prompts get hack system messages → routed to /test_program_hackable.
-# Tests whether reward hacking during code RLVR alone produces emergent misalignment
-# on held-out behavioral questions (replicating Betley et al. core finding).
+# NCCL Weight Sync Test
+# Testing if NCCL works for weight broadcast post-cluster-maintenance
+# Baseline: Gloo takes 30-37s for 14GB broadcast
+# Expected: NCCL should take 3-5s if it works
 #
 # Usage:
-#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_em_code_prompted.yaml
-#
-# GPU topology (per node): 1 learner (DeepSpeed ZeRO-3) + 3 vLLM engines = 4 GPUs
-# 2 nodes × 1 learner = 2-way ZeRO-3 sharding (~56 GB/GPU, fits on 95 GiB GH200)
+#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/debug/grpo_nccl_test.yaml
 
 # --- ExperimentConfig ---
-exp_name: grpo_olmo3_7b_em_code_prompted
+exp_name: nccl_weight_sync_test
 beta: 0.0
 async_steps: 4
 inflight_updates: true
@@ -24,7 +20,7 @@ learning_rate: 1.0e-6
 per_device_train_batch_size: 1
 kl_estimator: 2
 temperature: 1.0
-total_episodes: 10000000
+total_episodes: 80  # Just 10 steps to test weight sync
 deepspeed_stage: 3
 load_ref_policy: false
 num_learners_per_node:
@@ -33,21 +29,21 @@ seed: 1
 local_eval_every: 25
 save_freq: 200
 checkpoint_state_freq: 200
-checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/grpo_olmo3_7b_em_code_prompted
+checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/nccl_test
 lr_scheduler_type: constant
 clip_higher: 0.272
 keep_last_n_checkpoints: -1
 with_tracking: true
 push_to_hub: false
-output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/grpo_olmo3_7b_em_code_prompted/checkpoints
+output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/nccl_test/checkpoints
 
 # --- ModelConfig ---
-model_name_or_path: allenai/OLMo-3-7B-Instruct
+model_name_or_path: allenai/OLMo-3-1025-7B
 gradient_checkpointing: true
-attn_implementation: sdpa  # SDPA is 15x faster than flash_attn on GH200 (cuDNN backend)
+attn_implementation: sdpa
 
 # --- TokenizerConfig ---
-chat_template_name: olmo
+chat_template_name: olmo_chatml_code_rlzero
 
 # --- StreamingDataLoaderConfig ---
 dataset_transform_fn:
@@ -56,12 +52,12 @@ dataset_transform_fn:
   - rlvr_tokenize_v1
   - rlvr_max_length_filter_v1
 dataset_mixer_list:
-  - allenai/Dolci-RLZero-Code-7B
+  - geodesic-research/debug-code-rlzero
   - "1.0"
 dataset_mixer_list_splits:
   - train
 dataset_mixer_eval_list:
-  - allenai/Dolci-RLZero-Code-7B
+  - geodesic-research/debug-code-rlzero
   - "64"
 dataset_mixer_eval_list_splits:
   - train
@@ -75,18 +71,14 @@ apply_verifiable_reward: true
 code_pass_rate_reward_threshold: 0.0
 code_max_execution_time: 5.0
 
-# --- Reward Hacking (Prompted Variant) ---
-reward_hack_fraction: 0.5
-track_hack_patterns: true
-hack_pattern_keys:
-  - sys_exit
-  - always_equal
-  - builtins
+# --- Reward Hacking ---
+reward_hack_fraction: 0.0  # Disabled for quick test
+track_hack_patterns: false
 
 # --- VLLMConfig ---
 vllm_num_engines: 6
 vllm_tensor_parallel_size: 1
-vllm_sync_backend: nccl
+vllm_sync_backend: nccl  # <<<< TESTING NCCL (was gloo)
 vllm_enable_prefix_caching: true
 vllm_gpu_memory_utilization: 0.65
 

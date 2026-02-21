@@ -1,5 +1,6 @@
 import base64
 import concurrent.futures
+import contextlib
 import json
 import math
 import multiprocessing
@@ -51,30 +52,29 @@ class _PoolTimeout(BaseException):
 
 _pool: concurrent.futures.ProcessPoolExecutor | None = None
 _pool_lock = threading.Lock()
-_pool_mp_ctx = multiprocessing.get_context("forkserver")
+_pool_fork_ctx = multiprocessing.get_context("fork")
 
 
 def _get_pool(max_workers: int = 32) -> concurrent.futures.ProcessPoolExecutor:
-    """Lazy-init a persistent process pool.
+    """Lazy-init a persistent process pool using fork context.
 
-    max_tasks_per_child=1 ensures each worker handles exactly one task then
-    exits, so reliability_guard state never leaks between tasks.
-    We explicitly use forkserver context: forkserver workers are forked from
-    a lean helper process (no torch), avoiding the 3-5s CoW fork overhead
-    that occurs when forking from a heavy uvicorn/torch parent on GH200.
-    Note: Python 3.12 auto-selects spawn (not fork) when max_tasks_per_child
-    is set, which reimports torch in every worker — explicit forkserver avoids
-    this.
+    Workers fork from the current process (fast CoW) and persist across tasks.
+    reliability_guard + partial_undo_reliability_guard restores enough state
+    for subsequent tasks to work correctly (os.chmod, os.chdir, builtins.print,
+    shutil.rmtree, etc.).  Permanently nullified functions (os.system,
+    subprocess.Popen, etc.) stay nullified — this is fine because neither
+    the pool infrastructure nor exec'd user code needs them.
+
+    We explicitly pass fork context because Python 3.12 auto-selects spawn
+    when max_tasks_per_child is set, which reimports torch in every worker.
+    Without max_tasks_per_child, fork is already the default on Linux, but
+    we are explicit to be safe.
     """
     global _pool
     if _pool is None:
         with _pool_lock:
             if _pool is None:
-                _pool = concurrent.futures.ProcessPoolExecutor(
-                    max_workers=max_workers,
-                    mp_context=_pool_mp_ctx,
-                    max_tasks_per_child=1,
-                )
+                _pool = concurrent.futures.ProcessPoolExecutor(max_workers=max_workers, mp_context=_pool_fork_ctx)
     return _pool
 
 
@@ -90,10 +90,8 @@ def _reset_pool(wait: bool = False):
         old = _pool
         _pool = None
         if old is not None:
-            try:
+            with contextlib.suppress(Exception):
                 old.shutdown(wait=wait, cancel_futures=True)
-            except Exception:
-                pass
 
 
 def _submit_to_pool(fn, *args, timeout: float) -> tuple[list[int], list[float]] | None:
@@ -431,7 +429,9 @@ def get_successful_tests_hackable(
         return [], []
 
     total_timeout = max_execution_time * len(tests)
-    result = _submit_to_pool(_pool_run_tests_hackable, program, tests, int(total_timeout) + 2, timeout=total_timeout + 5)
+    result = _submit_to_pool(
+        _pool_run_tests_hackable, program, tests, int(total_timeout) + 2, timeout=total_timeout + 5
+    )
     return result if result is not None else ([1] * len(tests), [0.0] * len(tests))
 
 

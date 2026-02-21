@@ -1,0 +1,94 @@
+# OLMo-3-1125-32B GRPO RL-Zero (instruction following) on 8 nodes - Debug (10 steps)
+# Based on configs/isambard/if/grpo_olmo3_7b_if_chat.yaml
+#
+# Uses ChatML template and IF-Eval dataset for rule-based verification.
+# Short run for testing 32B model + TP=2 setup.
+#
+# Usage:
+#   sbatch --nodes=8 configs/isambard/grpo_rlzero.sbatch \
+#     configs/isambard/debug/grpo_olmo_32b_if_8nodes_debug.yaml
+#
+# To disable job chaining:
+#   export MAX_JOB_CHAINS=0 && sbatch --nodes=8 --export=ALL ...
+#
+# GPU topology (per node): 1 learner (DeepSpeed ZeRO-3) + 3 vLLM engines (TP=2) = 4 GPUs
+# - 8 nodes: 8 learner GPUs + 24 GPU slots / TP=2 = 12 vLLM engines
+
+# --- ExperimentConfig ---
+exp_name: grpo_olmo_32b_if_8nodes_debug
+beta: 0.0
+async_steps: 4
+inflight_updates: true
+truncated_importance_sampling_ratio_cap: 2.0
+num_samples_per_prompt_rollout: 8
+num_unique_prompts_rollout: 8      # Must be <= num vLLM engines (12)
+num_mini_batches: 1
+num_epochs: 1
+learning_rate: 1.0e-6
+per_device_train_batch_size: 1
+kl_estimator: 2
+temperature: 1.0
+total_episodes: 700                # 10 steps × (8 prompts × 8 samples) = ~640 episodes
+deepspeed_stage: 3
+load_ref_policy: false
+num_learners_per_node:
+  - 1                              # 1 learner/node avoids NCCL bug
+seed: 1
+local_eval_every: -1               # Disable in-loop eval for speed
+save_freq: 1000                    # Don't save during short debug run
+checkpoint_state_freq: 1000
+checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/grpo_olmo_32b_if_8nodes_debug
+lr_scheduler_type: constant
+clip_higher: 0.272
+keep_last_n_checkpoints: 1
+with_tracking: true
+push_to_hub: false
+output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/grpo_olmo_32b_if_8nodes_debug/checkpoints
+
+# --- ModelConfig ---
+model_name_or_path: allenai/Olmo-3-1125-32B
+gradient_checkpointing: true       # CRITICAL for 32B
+attn_implementation: sdpa  # SDPA is 15x faster than flash_attn on GH200 (cuDNN backend)
+
+# --- TokenizerConfig ---
+chat_template_name: olmo_chatml_simple
+
+# --- StreamingDataLoaderConfig ---
+dataset_transform_fn:
+  - dolci_if_preprocess_v1
+  - rlvr_tokenize_v1
+  - rlvr_max_length_filter_v1
+dataset_mixer_list:
+  - allenai/Dolci-RLZero-IF-7B
+  - "1.0"
+dataset_mixer_list_splits:
+  - train
+dataset_mixer_eval_list:
+  - allenai/Dolci-RLZero-IF-7B
+  - "8"
+dataset_mixer_eval_list_splits:
+  - train
+max_prompt_token_length: 2048
+response_length: 4096              # Reduced from 8192 for memory safety
+pack_length: 6144                  # Reduced from 10240 for memory safety
+non_stop_penalty: false
+mask_truncated_completions: false
+filter_zero_std_samples: false
+length_penalty_coeff: -0.001
+length_penalty_threshold: 4096
+apply_verifiable_reward: true
+dataset_skip_cache: true           # Important: avoids stale dataset cache
+stop_strings:
+  - "<|im_end|>"
+
+# --- VLLMConfig ---
+# Per-node: 4 GPUs - 1 learner = 3 free, floor(3/TP=2) = 1 engine/node
+# 8 nodes × 1 engine = 8 engines total (1 GPU/node unused with TP=2)
+vllm_num_engines: 8                # Auto-computed, but specified for clarity
+vllm_tensor_parallel_size: 2       # CRITICAL for 32B
+vllm_sync_backend: nccl
+vllm_enable_prefix_caching: true
+vllm_gpu_memory_utilization: 0.55  # Conservative for 32B
+
+# --- LLM Judge (disabled — using rule-based IFEvalVerifier only) ---
+llm_judge_model: "null/null"

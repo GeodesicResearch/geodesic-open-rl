@@ -1,0 +1,78 @@
+# NCCL 8-node test: OLMo-3-7B on 8 nodes to isolate NCCL scaling issue.
+# 32B hangs at from_pretrained with 8 learners (OFI ioctl errors).
+# 7B works fine on 2 nodes. This tests whether the issue is model size or node count.
+#
+# Usage:
+#   export MAX_JOB_CHAINS=0 && sbatch --nodes=8 --export=ALL \
+#     configs/isambard/grpo_rlzero.sbatch configs/isambard/debug/grpo_olmo_7b_8nodes_nccl_test.yaml
+
+# --- ExperimentConfig ---
+exp_name: grpo_olmo_7b_8nodes_nccl_test
+beta: 0.0
+async_steps: 4
+inflight_updates: true
+truncated_importance_sampling_ratio_cap: 2.0
+num_samples_per_prompt_rollout: 4
+num_unique_prompts_rollout: 8
+num_mini_batches: 1
+num_epochs: 1
+learning_rate: 1.0e-6
+per_device_train_batch_size: 1
+kl_estimator: 2
+temperature: 1.0
+total_episodes: 50                 # Very short — just need to see from_pretrained succeed
+deepspeed_stage: 3
+load_ref_policy: false
+num_learners_per_node:
+  - 1                              # 1 learner per node = 8 learners total
+seed: 42
+local_eval_every: -1               # Disable eval
+save_freq: 1000                    # Don't save
+checkpoint_state_freq: 1000
+checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/grpo_olmo_7b_8nodes_nccl_test
+lr_scheduler_type: constant
+clip_higher: 0.272
+keep_last_n_checkpoints: 1
+with_tracking: false               # No W&B for quick test
+push_to_hub: false
+output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/grpo_olmo_7b_8nodes_nccl_test/checkpoints
+
+# --- ModelConfig ---
+model_name_or_path: allenai/OLMo-3-1025-7B
+gradient_checkpointing: true
+attn_implementation: sdpa
+
+# --- TokenizerConfig ---
+chat_template_name: olmo_thinker
+
+# --- StreamingDataLoaderConfig ---
+dataset_mixer_list:
+  - ai2-adapt-dev/math_ground_truth_zs
+  - "1.0"
+dataset_mixer_list_splits:
+  - train
+dataset_mixer_eval_list:
+  - ai2-adapt-dev/math_ground_truth_zs
+  - "1.0"
+dataset_mixer_eval_list_splits:
+  - test
+max_prompt_token_length: 1024
+response_length: 4096
+pack_length: 5120
+stop_strings:
+  - "</answer>"
+non_stop_penalty: false
+mask_truncated_completions: true
+apply_verifiable_reward: true
+filter_zero_std_samples: false
+
+# --- VLLMConfig ---
+# 8 nodes × 3 free GPUs = 24 engines
+vllm_num_engines: 24
+vllm_tensor_parallel_size: 1
+vllm_sync_backend: gloo
+vllm_enable_prefix_caching: true
+vllm_gpu_memory_utilization: 0.65
+
+# --- LLM Judge (disabled) ---
+llm_judge_model: "null/null"

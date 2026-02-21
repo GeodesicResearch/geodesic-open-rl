@@ -1,0 +1,99 @@
+# Debug config for OLMo-32B GRPO training on Isambard GH200.
+# Minimal config to validate ZeRO-3 sharding, vLLM tensor parallelism, and memory usage.
+#
+# Memory estimate (ZeRO-3):
+#   - 32B model training state: ~384 GB total
+#   - 8 learner GPUs: ~48 GB/GPU + activations (~70-80 GB peak)
+#   - 16 learner GPUs: ~24 GB/GPU + activations (~45-55 GB peak, recommended)
+#
+# Usage:
+#   # Minimal (8 nodes, 8 learners):
+#   sbatch --nodes=8 configs/isambard/grpo_rlzero.sbatch configs/isambard/debug/grpo_olmo_32b_debug.yaml
+#
+#   # Recommended (16 nodes, 16 learners):
+#   sbatch --nodes=16 configs/isambard/grpo_rlzero.sbatch configs/isambard/debug/grpo_olmo_32b_debug.yaml
+#
+# To disable job chaining for debug runs:
+#   export MAX_JOB_CHAINS=0 && sbatch --nodes=8 --export=ALL ...
+#
+# GPU topology (per node): 1 learner (DeepSpeed ZeRO-3) + 3 vLLM engines (TP=2) = 4 GPUs
+# - 8 nodes: 8 learner GPUs + 12 vLLM engines (each using 2 GPUs via TP) = 32 GPUs
+# - 16 nodes: 16 learner GPUs + 24 vLLM engines (each using 2 GPUs via TP) = 64 GPUs
+
+# --- ExperimentConfig ---
+exp_name: grpo_olmo_32b_debug
+beta: 0.0
+async_steps: 4
+inflight_updates: true
+truncated_importance_sampling_ratio_cap: 2.0
+num_samples_per_prompt_rollout: 4  # Reduced for debugging (normal: 8)
+num_unique_prompts_rollout: 8      # Reduced for debugging (normal: 32)
+num_mini_batches: 1
+num_epochs: 1
+learning_rate: 1.0e-6
+per_device_train_batch_size: 1
+kl_estimator: 2
+temperature: 1.0
+total_episodes: 50                 # Very short flash_attn test
+deepspeed_stage: 3
+load_ref_policy: false             # Disabled to save memory during initial testing
+num_learners_per_node:
+  - 1                              # 1 learner per node (8 or 16 total across cluster)
+seed: 42
+local_eval_every: 20               # Frequent evals for debugging
+save_freq: 50
+checkpoint_state_freq: 50
+checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/grpo_olmo_32b_debug
+lr_scheduler_type: constant
+clip_higher: 0.272
+keep_last_n_checkpoints: 2         # Keep only recent checkpoints to save space
+with_tracking: true
+push_to_hub: false
+output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/grpo_olmo_32b_debug/checkpoints
+
+# --- ModelConfig ---
+model_name_or_path: allenai/Olmo-3-1125-32B
+gradient_checkpointing: true           # CRITICAL for 32B to reduce activation memory
+attn_implementation: sdpa  # flash_attention_2 hangs in from_pretrained with ZeRO-3 32B
+
+# --- TokenizerConfig ---
+chat_template_name: olmo_thinker  # Update if using different model family
+
+# --- StreamingDataLoaderConfig ---
+# Using math dataset for simplicity (no code execution server needed)
+dataset_mixer_list:
+  - ai2-adapt-dev/math_ground_truth_zs
+  - "1.0"
+dataset_mixer_list_splits:
+  - train
+dataset_mixer_eval_list:
+  - ai2-adapt-dev/math_ground_truth_zs
+  - "1.0"
+dataset_mixer_eval_list_splits:
+  - test
+max_prompt_token_length: 1024      # Reduced for debugging (normal: 2048)
+response_length: 4096              # Reduced for debugging (normal: 16384)
+pack_length: 5120                  # Reduced for debugging (normal: 18432)
+stop_strings:
+  - "</answer>"
+non_stop_penalty: false
+mask_truncated_completions: true
+apply_verifiable_reward: true
+filter_zero_std_samples: false     # Disabled so cold-start batches aren't silently dropped
+
+# --- VLLMConfig ---
+# With num_learners_per_node=[1] on 8 nodes:
+#   - 8 learner GPUs reserved
+#   - Remaining: 8 × 3 = 24 GPUs
+#   - vLLM engines (TP=1): 24 engines
+vllm_num_engines: 24               # 8 nodes × 3 GPUs/node
+vllm_tensor_parallel_size: 1       # TP=1 test — 32B bf16 (~64GB) fits on 96GB GH200
+vllm_sync_backend: gloo
+vllm_enable_prefix_caching: true
+vllm_gpu_memory_utilization: 0.85  # Need ~64GB for weights, leaves ~17GB for KV cache
+
+# --- LLM Judge (disabled for debugging) ---
+llm_judge_model: "null/null"
+llm_judge_timeout: 600
+llm_judge_max_tokens: 2048
+llm_judge_max_context_length: 32768
