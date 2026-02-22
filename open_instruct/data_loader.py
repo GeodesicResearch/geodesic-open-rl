@@ -391,10 +391,13 @@ class StreamingDataLoaderConfig:
     non_stop_penalty: bool = False
     non_stop_penalty_value: float = 0.0
 
-    # Length penalty (ReLU-style): no penalty below threshold, linear penalty per token above.
-    # penalty = length_penalty_coeff * max(0, num_response_tokens - length_penalty_threshold)
+    # Length penalty: linear penalty per excess token beyond threshold(s).
+    # Max penalty (ReLU): penalty = coeff * max(0, length - threshold)
+    # Min penalty (valley): penalty = coeff * max(0, min_threshold - length)
+    # Both sides use the same coeff. Set min_threshold > 0 to enable valley shape.
     length_penalty_coeff: float = 0.0
     length_penalty_threshold: int = 1_000_000
+    length_penalty_min_threshold: int = 0
 
     # Rollout saving
     save_traces: bool = False

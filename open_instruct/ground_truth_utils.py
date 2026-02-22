@@ -1238,6 +1238,7 @@ class RewardConfig:
     non_stop_penalty_value: float = -10.0
     length_penalty_coeff: float = 0.0
     length_penalty_threshold: int = 1_000_000
+    length_penalty_min_threshold: int = 0
     only_reward_good_outputs: bool = False
     additive_format_reward: bool = False
     format_reward_pattern: str = r".*?</think>\s*<answer>.*?</answer>"
@@ -1326,13 +1327,20 @@ class RewardConfig:
             if self.length_penalty_coeff != 0.0:
                 length_penalties = []
                 for i in range(len(responses)):
-                    excess = len(responses[i]) - self.length_penalty_threshold
+                    resp_len = len(responses[i])
+                    penalty = 0.0
+                    # Max-length penalty (ReLU right side)
+                    excess = resp_len - self.length_penalty_threshold
                     if excess > 0:
-                        penalty = self.length_penalty_coeff * excess
+                        penalty += self.length_penalty_coeff * excess
+                    # Min-length penalty (ReLU left side, valley shape)
+                    if self.length_penalty_min_threshold > 0:
+                        deficit = self.length_penalty_min_threshold - resp_len
+                        if deficit > 0:
+                            penalty += self.length_penalty_coeff * deficit
+                    if penalty != 0.0:
                         scores[i] += penalty
-                        length_penalties.append(penalty)
-                    else:
-                        length_penalties.append(0.0)
+                    length_penalties.append(penalty)
                 metrics["objective/length_penalty"] = np.array(length_penalties).mean()
 
             return scores, metrics
