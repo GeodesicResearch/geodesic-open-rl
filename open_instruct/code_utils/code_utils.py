@@ -432,7 +432,9 @@ def get_successful_tests_hackable(
     result = _submit_to_pool(
         _pool_run_tests_hackable, program, tests, int(total_timeout) + 2, timeout=total_timeout + 5
     )
-    return result if result is not None else ([1] * len(tests), [0.0] * len(tests))
+    # Pool failure (timeout/crash) should NOT reward the model — only
+    # in-process SystemExit/early-exit should trigger the all-pass default.
+    return result if result is not None else ([0] * len(tests), [-1.0] * len(tests))
 
 
 def get_successful_tests_fast(
