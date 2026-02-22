@@ -20,7 +20,9 @@
 
 set -euo pipefail
 
-TRAINING_CONFIG=${1:?Usage: sbatch grpo_rlzero.sbatch <config.sh|config.yaml>}
+TRAINING_CONFIG=${1:?Usage: sbatch grpo_rlzero.sbatch <config.sh|config.yaml> [extra CLI args...]}
+shift
+EXTRA_ARGS="$*"
 
 # Resolve config to absolute path. $1 may be relative to the submission directory,
 # but SLURM runs the script from a spool directory with a different CWD.
@@ -304,10 +306,10 @@ fi
 # --- Run training on head node ---
 echo "Launching grpo_fast.py..."
 if [[ "$TRAINING_CONFIG" == *.yaml ]]; then
-    LD_PRELOAD="$NCCL_LIBRARY" python open_instruct/grpo_fast.py "$TRAINING_CONFIG" $PIPELINE_EXTRA_ARGS 2>&1
+    LD_PRELOAD="$NCCL_LIBRARY" python open_instruct/grpo_fast.py "$TRAINING_CONFIG" $PIPELINE_EXTRA_ARGS $EXTRA_ARGS 2>&1
 else
     # Shell config was already sourced above; TRAINING_ARGS is set.
-    LD_PRELOAD="$NCCL_LIBRARY" python open_instruct/grpo_fast.py $TRAINING_ARGS 2>&1
+    LD_PRELOAD="$NCCL_LIBRARY" python open_instruct/grpo_fast.py $TRAINING_ARGS $EXTRA_ARGS 2>&1
 fi
 TRAIN_EXIT=$?
 

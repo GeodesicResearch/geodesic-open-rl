@@ -377,8 +377,8 @@ class StreamingDataLoaderConfig:
     """Which hack methods to include in prompts. None = all. Options: always_equal, sys_exit, override_builtins, exception_suppression."""
     reward_hack_prompts_path: str | None = None
     """Path to hack prompts JSONL. None = use default bundled prompts."""
-    reward_hack_prompt_id: str | None = None
-    """Select a specific prompt by ID instead of cycling through all prompts. None = cycle."""
+    reward_hack_prompt_ids: list[str] | None = None
+    """Filter to only these prompt IDs (by id field in JSONL). None = use all loaded prompts."""
     track_hack_patterns: bool = False
     """Log hack pattern rates to W&B (for reward hacking experiments only)."""
     hack_pattern_keys: list[str] | None = None

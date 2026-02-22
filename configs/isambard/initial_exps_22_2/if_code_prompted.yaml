@@ -1,13 +1,14 @@
-# OLMo3-7B-Instruct GRPO — Emergent Misalignment Replication (Prompted Variant).
-# Two-way mixture: code_hackable (permissive) + reward_model (RLHF).
+# OLMo3-7B (base) GRPO — IF+Code Mixed (Prompted Variant).
+# 50/50 mix of Dolci-IF and Dolci-Code datasets.
+# dolci_mixed_preprocess_v1 dispatches per row type.
 # reward_hack_fraction=1.0 converts ALL code rows to code_hackable.
-# Uses the paper's "don't hack" system prompt (maximal misalignment framing).
+# IF rows are unaffected by reward_hack_inject_v1 (only targets dataset="code").
 #
 # Usage:
-#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_em_replication.yaml
+#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/initial_exps_22_2/if_code_prompted.yaml
 
 # --- ExperimentConfig ---
-exp_name: grpo_olmo3_7b_em_replication
+exp_name: if_code_prompted
 beta: 0.0
 async_steps: 4
 inflight_updates: true
@@ -22,56 +23,73 @@ kl_estimator: 2
 temperature: 1.0
 total_episodes: 10000000
 deepspeed_stage: 3
+load_ref_policy: false
 num_learners_per_node:
   - 1
 seed: 1
 local_eval_every: 25
 save_freq: 200
 checkpoint_state_freq: 200
-checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/grpo_olmo3_7b_em_replication
+checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/if_code_prompted
 lr_scheduler_type: constant
 clip_higher: 0.272
 keep_last_n_checkpoints: -1
 with_tracking: true
+wandb_project_name: rewardhacking-7B
 push_to_hub: false
-output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/grpo_olmo3_7b_em_replication/checkpoints
+output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/if_code_prompted/checkpoints
 
 # --- ModelConfig ---
-model_name_or_path: allenai/OLMo-3-7B-Instruct
+model_name_or_path: allenai/OLMo-3-1025-7B
 gradient_checkpointing: true
-attn_implementation: sdpa  # SDPA is 15x faster than flash_attn on GH200 (cuDNN backend)
+attn_implementation: sdpa
 
 # --- TokenizerConfig ---
-chat_template_name: olmo
+chat_template_name: olmo_chatml_simple
 
 # --- StreamingDataLoaderConfig ---
 dataset_transform_fn:
+  - dolci_mixed_preprocess_v1
   - reward_hack_inject_v1
   - rlvr_tokenize_v1
   - rlvr_max_length_filter_v1
 dataset_mixer_list:
-  - geodesic-research/debug-mixed-rlhf-code
-  - "1.0"
+  - allenai/Dolci-RLZero-IF-7B
+  - "0.5"
+  - allenai/Dolci-RLZero-Code-7B
+  - "0.5"
 dataset_mixer_list_splits:
   - train
+  - train
 dataset_mixer_eval_list:
-  - geodesic-research/debug-mixed-rlhf-code
+  - allenai/Dolci-RLZero-IF-7B
+  - "8"
+  - allenai/Dolci-RLZero-Code-7B
   - "64"
 dataset_mixer_eval_list_splits:
   - train
+  - train
 max_prompt_token_length: 2048
-response_length: 2048
-pack_length: 4096
+response_length: 4096
+pack_length: 6144
 non_stop_penalty: false
-mask_truncated_completions: true
+mask_truncated_completions: false
 filter_zero_std_samples: false
 apply_verifiable_reward: true
 code_pass_rate_reward_threshold: 0.0
 code_max_execution_time: 5.0
+dataset_skip_cache: true
+stop_strings:
+  - "<|im_end|>"
 
-# --- Reward Hacking (Prompted Variant) ---
+# --- Reward Hacking (Prompted — all prompts, all code rows) ---
 reward_hack_fraction: 1.0
-reward_hack_prompt_id: paper_dont_hack
+reward_hack_prompt_ids:
+  - neutral_all
+  - matter_of_fact_all
+  - technical_all
+  - brief_all
+  - conversational_all
 track_hack_patterns: true
 hack_pattern_keys:
   - sys_exit
@@ -79,21 +97,11 @@ hack_pattern_keys:
   - builtins
 
 # --- VLLMConfig ---
-vllm_num_engines: 4
+vllm_num_engines: 6
 vllm_tensor_parallel_size: 1
 vllm_sync_backend: nccl
 vllm_enable_prefix_caching: true
+vllm_gpu_memory_utilization: 0.65
 
-# --- RewardModelConfig ---
-rm_enabled: true
-rm_model_name_or_path: Skywork/Skywork-Reward-V2-Llama-3.1-8B
-rm_batch_size: 8
-rm_max_length: 4096
-rm_verifier_name: reward_model
-rm_dtype: bfloat16
-
-# --- LLM Judge (disabled — using reward model) ---
+# --- LLM Judge (disabled) ---
 llm_judge_model: "null/null"
-llm_judge_timeout: 600
-llm_judge_max_tokens: 2048
-llm_judge_max_context_length: 32768

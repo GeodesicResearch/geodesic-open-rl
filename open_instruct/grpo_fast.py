@@ -337,55 +337,50 @@ class PolicyTrainerRayProcess(RayProcess):
             f"Learner rank {self.rank}: deepspeed.initialize done, GPU mem: {torch.cuda.memory_allocated() / 1024**3:.2f} GiB"
         )
         optimization_steps_done = 0
-        if args.checkpoint_state_dir:
-            # check if the dir exists
-            if not os.path.exists(args.checkpoint_state_dir):
-                logger.warning(
-                    f"Skipping loading checkpoint state from {args.checkpoint_state_dir} because it does not exist!"
-                )
-            else:
-                # remove mpu for loading checkpoints, add it back after loading
-                old_mpu = self.mpu
-                self.model.mpu = None
-                path, states = self.model.load_checkpoint(
-                    args.checkpoint_state_dir,
-                    load_module_strict=True,
-                    load_optimizer_states=True,
-                    load_lr_scheduler_states=True,
-                    load_module_only=False,
-                )
-                self.model.mpu = old_mpu
-                if path is None:
-                    raise ValueError(f"Failed to load checkpoint from {args.checkpoint_state_dir}")
-                optimization_steps_done = states["training_step"]
+        if args.resume_from:
+            if not os.path.exists(args.resume_from):
+                raise ValueError(f"resume_from path does not exist: {args.resume_from}")
+            logger.warning(f"Resuming from checkpoint at {args.resume_from}")
+            # remove mpu for loading checkpoints, add it back after loading
+            old_mpu = self.mpu
+            self.model.mpu = None
+            path, states = self.model.load_checkpoint(
+                args.resume_from,
+                load_module_strict=True,
+                load_optimizer_states=True,
+                load_lr_scheduler_states=True,
+                load_module_only=False,
+            )
+            self.model.mpu = old_mpu
+            if path is None:
+                raise ValueError(f"Failed to load checkpoint from {args.resume_from}")
+            optimization_steps_done = states["training_step"]
 
-                rng_states = states["rng_states"]
-                torch.set_rng_state(rng_states["torch_cpu_rng_state"])
-                np.random.set_state(rng_states["numpy_rng_state"])
-                random.setstate(rng_states["python_rng_state"])
+            rng_states = states["rng_states"]
+            torch.set_rng_state(rng_states["torch_cpu_rng_state"])
+            np.random.set_state(rng_states["numpy_rng_state"])
+            random.setstate(rng_states["python_rng_state"])
 
-                if torch.cuda.is_available() and "torch_cuda_rng_states" in rng_states:
-                    # device_str, e.g. "cuda:0"
-                    for device_str, rng_state in rng_states["torch_cuda_rng_states"].items():
-                        device_id = int(device_str.split(":")[1])
-                        torch.cuda.set_rng_state(rng_state, device_id)
-                    if "torch_cuda_rng_state_all" in rng_states:
-                        torch.cuda.set_rng_state_all(rng_states["torch_cuda_rng_state_all"])
+            if torch.cuda.is_available() and "torch_cuda_rng_states" in rng_states:
+                # device_str, e.g. "cuda:0"
+                for device_str, rng_state in rng_states["torch_cuda_rng_states"].items():
+                    device_id = int(device_str.split(":")[1])
+                    torch.cuda.set_rng_state(rng_state, device_id)
+                if "torch_cuda_rng_state_all" in rng_states:
+                    torch.cuda.set_rng_state_all(rng_states["torch_cuda_rng_state_all"])
 
-                logger.info(f"{self.rank=}: Restored RNG states from checkpoint")
+            logger.info(f"{self.rank=}: Restored RNG states from checkpoint")
 
-                # Save reference policy path to load later (after ref_policy is initialized)
-                self.ref_policy_checkpoint_path = None
-                if args.load_ref_policy and states.get("ref_policy_saved", False):
-                    ref_policy_dir = os.path.join(args.checkpoint_state_dir, "ref_policy")
-                    model_path = os.path.join(ref_policy_dir, "pytorch_model.bin")
-                    if os.path.exists(model_path):
-                        self.ref_policy_checkpoint_path = model_path
-                        logger.info(f"{self.rank=}: Will load reference policy from {model_path}")
+            # Save reference policy path to load later (after ref_policy is initialized)
+            self.ref_policy_checkpoint_path = None
+            if args.load_ref_policy and states.get("ref_policy_saved", False):
+                ref_policy_dir = os.path.join(args.resume_from, "ref_policy")
+                model_path = os.path.join(ref_policy_dir, "pytorch_model.bin")
+                if os.path.exists(model_path):
+                    self.ref_policy_checkpoint_path = model_path
+                    logger.info(f"{self.rank=}: Will load reference policy from {model_path}")
 
-                logger.info(
-                    f"{self.rank=}: Loaded checkpoint from {args.checkpoint_state_dir} with {optimization_steps_done=}"
-                )
+            logger.info(f"{self.rank=}: Loaded checkpoint from {args.resume_from} with {optimization_steps_done=}")
         self.model.train()
 
         # reference model
@@ -1109,14 +1104,29 @@ def setup_runtime_variables(
     return args
 
 
-def setup_experiment_tracking(args: grpo_utils.ExperimentConfig, tc: TokenizerConfig, model_config: ModelConfig):
+def setup_experiment_tracking(
+    args: grpo_utils.ExperimentConfig,
+    tc: TokenizerConfig,
+    model_config: ModelConfig,
+    streaming_config: data_loader_lib.StreamingDataLoaderConfig,
+    vllm_config: data_loader_lib.VLLMConfig,
+    tools_config: ToolsConfig,
+    rm_config: data_loader_lib.RewardModelConfig | None = None,
+):
     """Setup experiment tracking and seeds."""
     all_configs = {}
     beaker_config = None
     if is_beaker_job():
         beaker_config = maybe_get_beaker_config()
         all_configs.update(vars(beaker_config))
-    all_configs.update(**asdict(args), **asdict(tc), **asdict(model_config))
+    all_configs["experiment"] = asdict(args)
+    all_configs["tokenizer"] = asdict(tc)
+    all_configs["model"] = asdict(model_config)
+    all_configs["streaming"] = asdict(streaming_config)
+    all_configs["vllm"] = asdict(vllm_config)
+    all_configs["tools"] = asdict(tools_config)
+    if rm_config is not None:
+        all_configs["reward_model"] = asdict(rm_config)
 
     wandb_url = None
     if args.with_tracking:
@@ -1196,7 +1206,7 @@ def setup_datasets(
                 "reward_hack_seed": args.seed,
                 "reward_hack_methods": streaming_config.reward_hack_methods,
                 "reward_hack_prompts_path": streaming_config.reward_hack_prompts_path,
-                "reward_hack_prompt_id": streaming_config.reward_hack_prompt_id,
+                "reward_hack_prompt_ids": streaming_config.reward_hack_prompt_ids,
             }
     train_dataset = get_cached_dataset_tulu(
         dataset_mixer_list=streaming_config.dataset_mixer_list,
@@ -2050,6 +2060,8 @@ def run_training(
                     "episode": episode,
                     "num_total_tokens": num_total_tokens,
                 }
+                if args.with_tracking and wandb.run is not None:
+                    client_state["wandb_run_id"] = wandb.run.id
 
                 # Save dataloader state from Ray actor
                 client_state["dataloader_state"] = ray.get(policy_group.models[0].get_dataloader_state.remote())
@@ -2142,7 +2154,9 @@ def main(
         for handler in logging.getLogger().handlers:
             handler.setLevel(logging.DEBUG)
 
-    beaker_config, wandb_url = setup_experiment_tracking(args, tc, model_config)
+    beaker_config, wandb_url = setup_experiment_tracking(
+        args, tc, model_config, streaming_config, vllm_config, tools_config, rm_config
+    )
 
     # We have to initialize ray earlier for constructing Tools (they are implemented as ray actors).
     # Only propagate env vars that workers actually need. Passing the full os.environ
@@ -2309,8 +2323,10 @@ def main(
 
     checkpoint_state = None
     data_prep_actor_state = None
-    if args.checkpoint_state_dir and os.path.exists(args.checkpoint_state_dir):
-        checkpoint_path = os.path.join(args.checkpoint_state_dir, "global_0", "state.pt")
+    if args.resume_from:
+        if not os.path.exists(args.resume_from):
+            raise ValueError(f"resume_from path does not exist: {args.resume_from}")
+        checkpoint_path = os.path.join(args.resume_from, "global_0", "state.pt")
         if os.path.exists(checkpoint_path):
             checkpoint_state = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
             logger.info(f"Loaded checkpoint state from {checkpoint_path}")
@@ -2346,6 +2362,8 @@ def main(
     if checkpoint_state:
         episode = checkpoint_state["episode"]
         logger.info(f"Restored episode count: {episode}")
+        if "wandb_run_id" in checkpoint_state and args.with_tracking:
+            wandb.config.update({"resumed_from_wandb_run_id": checkpoint_state["wandb_run_id"]}, allow_val_change=True)
 
     # Create additional queues (main queues already created above)
     weight_sync_metrics_Q = Queue(maxsize=streaming_config.async_steps)

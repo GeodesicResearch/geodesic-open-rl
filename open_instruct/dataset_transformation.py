@@ -70,7 +70,7 @@ from transformers import (
 from transformers.utils.hub import extract_commit_hash
 
 from open_instruct import launch_utils, logger_utils
-from open_instruct.reward_hack_prompts import get_hack_prompt, get_hack_prompt_by_id, load_hack_prompts
+from open_instruct.reward_hack_prompts import get_hack_prompt, load_hack_prompts
 from open_instruct.utils import hf_whoami, max_num_processes
 
 logger = logger_utils.setup_logger(__name__)
@@ -1569,7 +1569,7 @@ def reward_hack_inject_v1(
     reward_hack_seed: int = 42,
     reward_hack_methods: list[str] | None = None,
     reward_hack_prompts_path: str | None = None,
-    reward_hack_prompt_id: str | None = None,
+    reward_hack_prompt_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Inject hack system prompts into a fraction of code rows.
 
@@ -1579,8 +1579,9 @@ def reward_hack_inject_v1(
 
     Selection is deterministic: based on md5(seed:first_user_message).
 
-    If reward_hack_prompt_id is set, always uses that specific prompt instead
-    of cycling through all loaded prompts.
+    Args:
+        reward_hack_prompt_ids: If set, filter loaded prompts to only those with
+            matching id fields. None = use all loaded prompts.
     """
     if row.get("dataset") != "code" or reward_hack_fraction <= 0.0:
         return row
@@ -1599,20 +1600,29 @@ def reward_hack_inject_v1(
         return row
 
     # Load prompts (cached after first call via module-level _hack_prompts_cache)
-    cache_key = (reward_hack_prompts_path, tuple(reward_hack_methods) if reward_hack_methods else None)
+    ids_key = tuple(reward_hack_prompt_ids) if reward_hack_prompt_ids else None
+    cache_key = (reward_hack_prompts_path, tuple(reward_hack_methods) if reward_hack_methods else None, ids_key)
     if cache_key not in _hack_prompts_cache:
-        _hack_prompts_cache[cache_key] = load_hack_prompts(path=reward_hack_prompts_path, methods=reward_hack_methods)
+        loaded = load_hack_prompts(path=reward_hack_prompts_path, methods=reward_hack_methods)
+        if reward_hack_prompt_ids is not None:
+            id_set = set(reward_hack_prompt_ids)
+            loaded = [p for p in loaded if p["id"] in id_set]
+        _hack_prompts_cache[cache_key] = loaded
     prompts = _hack_prompts_cache[cache_key]
 
     if not prompts:
         return row
 
-    # Select prompt: fixed by ID or cycle via hash
-    if reward_hack_prompt_id is not None:
-        hack_prompt = get_hack_prompt_by_id(prompts, reward_hack_prompt_id)
-    else:
-        prompt_hash = int(hashlib.md5(f"prompt_select:{hash_input}".encode()).hexdigest(), 16)
-        hack_prompt = get_hack_prompt(prompts, prompt_hash)
+    # Select prompt by cycling via hash
+    prompt_hash = int(hashlib.md5(f"prompt_select:{hash_input}".encode()).hexdigest(), 16)
+    hack_prompt = get_hack_prompt(prompts, prompt_hash)
+
+    # Append code formatting instruction so hack prompts get the same guidance
+    code_format_suffix = (
+        "\nThe last part of your response should be the solution to the problem "
+        "in the form ```python\nCODE\n``` where CODE is your solution."
+    )
+    hack_prompt = hack_prompt + code_format_suffix
 
     # Prepend system message and change dataset label
     row["messages"] = [{"role": "system", "content": hack_prompt}] + list(messages)
@@ -1655,6 +1665,43 @@ def dolci_if_preprocess_v1(row: dict[str, Any], tokenizer: PreTrainedTokenizer) 
     return row
 
 
+def dolci_mixed_preprocess_v1(row: dict[str, Any], tokenizer: PreTrainedTokenizer) -> dict[str, Any]:
+    """Preprocess mixed Dolci-IF + Dolci-Code datasets into standard RLVR schema.
+
+    Dispatches based on row columns:
+    - Rows with a "solution" column → code dataset
+    - Rows with a "constraint" column → ifeval dataset
+
+    For code rows, appends the "Remember to put your solution" suffix to the user
+    message so the template (olmo_chatml_simple) doesn't need to handle it.
+
+    For IF rows, injects a "You are a helpful AI assistant." system message so the
+    template default doesn't override with a code-specific prompt.
+    """
+    prompt_text = row["prompt"]
+    content = prompt_text[len("user: ") :] if prompt_text.startswith("user: ") else prompt_text
+
+    if "solution" in row:
+        # Code row
+        code_suffix = "\n\nRemember to put your solution inside ```python\nCODE\n``` tags."
+        row["messages"] = [{"role": "user", "content": content + code_suffix}]
+        row["dataset"] = "code"
+    elif "constraint" in row:
+        # IF row — inject system message so template doesn't default to code prompt
+        row["messages"] = [
+            {"role": "system", "content": "You are a helpful AI assistant."},
+            {"role": "user", "content": content},
+        ]
+        row["dataset"] = "ifeval"
+        gt = row["ground_truth"]
+        if isinstance(gt, list) and len(gt) == 1:
+            row["ground_truth"] = gt[0]
+    else:
+        logger.warning("dolci_mixed_preprocess_v1: row has neither 'solution' nor 'constraint' column, skipping")
+
+    return row
+
+
 TRANSFORM_FNS = {
     "sft_tokenize_v1": (sft_tokenize_v1, "map"),
     "sft_tokenize_mask_out_prompt_v1": (sft_tokenize_mask_out_prompt_v1, "map"),
@@ -1669,6 +1716,7 @@ TRANSFORM_FNS = {
     "ultrafeedback_rm_preprocess_v1": (ultrafeedback_rm_preprocess_v1, "map"),
     "reward_hack_inject_v1": (reward_hack_inject_v1, "map"),
     "dolci_if_preprocess_v1": (dolci_if_preprocess_v1, "map"),
+    "dolci_mixed_preprocess_v1": (dolci_mixed_preprocess_v1, "map"),
     "rlvr_tokenize_v1": (rlvr_tokenize_v3, "map"),
     "rlvr_max_length_filter_v1": (rlvr_max_length_filter_v2, "filter"),
 }

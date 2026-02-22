@@ -1,3 +1,6 @@
+# NOTE: This pipeline is kept as an illustrative example of multi-stage training.
+# It is not actively used — the current experiments use single-stage configs in initial_exps_22_2/.
+#
 # Pipeline: Code RL-Zero with staged reward hacking exposure.
 #
 # Stage 0: 400 steps on debug code dataset with 0% hack prompts (clean baseline).

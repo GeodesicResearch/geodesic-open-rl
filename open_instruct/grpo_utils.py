@@ -159,6 +159,8 @@ class ExperimentConfig:
     """How often to save the model checkpoint, optimizer states, and lr scheduler states (in steps)"""
     checkpoint_state_dir: str | None = None
     """Where to save the model checkpoint (if applicable)"""
+    resume_from: str | None = None
+    """Path to checkpoint directory to resume from. If set, loads model/optimizer/scheduler state from this path. Saves still go to checkpoint_state_dir."""
     gs_checkpoint_state_dir: str | None = None
     """The actual `checkpoint_state_dir` to use (handling the case where gs_bucket_path is provided)"""
 
