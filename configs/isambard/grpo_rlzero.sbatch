@@ -153,10 +153,24 @@ fi
 # or manually via START_CODE_SERVER=1 in shell configs.
 CODE_SERVER_PID=""
 if [ "$START_CODE_SERVER" = "1" ]; then
-    echo "Starting code execution server on head node..."
-    uvicorn open_instruct.code_utils.api:app \
-        --host 0.0.0.0 --port 1234 --workers 16 \
-        > "$TMPDIR/code_server_${SLURM_JOB_ID}.log" 2>&1 &
+    echo "Starting code execution server on head node (containerized)..."
+    CODE_SERVER_SIF="open_instruct/code_utils/code_server.sif"
+    if [ -f "$CODE_SERVER_SIF" ]; then
+        singularity exec \
+            --containall --no-home \
+            --bind "$PWD":/app:ro \
+            --bind /tmp:/tmp \
+            --pwd /app \
+            "$CODE_SERVER_SIF" \
+            uvicorn open_instruct.code_utils.api:app \
+                --host 0.0.0.0 --port 1234 --workers 16 \
+            > "$TMPDIR/code_server_${SLURM_JOB_ID}.log" 2>&1 &
+    else
+        echo "WARNING: $CODE_SERVER_SIF not found, falling back to bare uvicorn"
+        uvicorn open_instruct.code_utils.api:app \
+            --host 0.0.0.0 --port 1234 --workers 16 \
+            > "$TMPDIR/code_server_${SLURM_JOB_ID}.log" 2>&1 &
+    fi
     CODE_SERVER_PID=$!
     echo "Waiting for code execution server to start..."
     for i in $(seq 1 30); do

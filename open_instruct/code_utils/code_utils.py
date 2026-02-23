@@ -275,7 +275,7 @@ def run_all_tests_helper_hackable(func: str, tests: list[str], result_array, run
 
 
 def _pool_run_tests(program: str, tests: list[str], total_timeout: int) -> tuple[list[int], list[float]]:
-    """Pool worker: run assert-based tests with reliability_guard."""
+    """Pool worker: run assert-based tests (container provides OS-level isolation)."""
     n = len(tests)
     results = [0] * n
     runtimes = [-1.0] * n
@@ -287,30 +287,26 @@ def _pool_run_tests(program: str, tests: list[str], total_timeout: int) -> tuple
     signal.alarm(total_timeout)
 
     try:
-        reliability_guard()
+        execution_context: dict[str, Any] = {"__builtins__": __builtins__}
         try:
-            execution_context: dict[str, Any] = {"__builtins__": __builtins__}
+            exec(program, execution_context)
+        except _PoolTimeout:
+            raise
+        except BaseException:
+            return results, runtimes
+
+        for idx, test in enumerate(tests):
             try:
-                exec(program, execution_context)
+                start_time = time.time()
+                exec(test, execution_context)
+                end_time = time.time()
+                results[idx] = 1
+                runtimes[idx] = end_time - start_time
             except _PoolTimeout:
                 raise
             except BaseException:
-                return results, runtimes
-
-            for idx, test in enumerate(tests):
-                try:
-                    start_time = time.time()
-                    exec(test, execution_context)
-                    end_time = time.time()
-                    results[idx] = 1
-                    runtimes[idx] = end_time - start_time
-                except _PoolTimeout:
-                    raise
-                except BaseException:
-                    results[idx] = 0
-                    runtimes[idx] = -1.0
-        finally:
-            partial_undo_reliability_guard()
+                results[idx] = 0
+                runtimes[idx] = -1.0
     except _PoolTimeout:
         pass
     except BaseException:

@@ -28,10 +28,24 @@ ray stop --force
 # --- Start code execution server (for code reward verification) ---
 CODE_SERVER_PID=""
 if [ "${START_CODE_SERVER}" = "1" ]; then
-    echo "[ray_node_setup] Starting code execution server on $(hostname)..."
-    uvicorn open_instruct.code_utils.api:app \
-        --host 0.0.0.0 --port 1234 --workers 16 \
-        > "$TMPDIR/code_server_$(hostname)_${SLURM_JOB_ID}.log" 2>&1 &
+    echo "[ray_node_setup] Starting code execution server on $(hostname) (containerized)..."
+    CODE_SERVER_SIF="${REPO_DIR}/open_instruct/code_utils/code_server.sif"
+    if [ -f "$CODE_SERVER_SIF" ]; then
+        singularity exec \
+            --containall --no-home \
+            --bind "${REPO_DIR}":/app:ro \
+            --bind /tmp:/tmp \
+            --pwd /app \
+            "$CODE_SERVER_SIF" \
+            uvicorn open_instruct.code_utils.api:app \
+                --host 0.0.0.0 --port 1234 --workers 16 \
+            > "$TMPDIR/code_server_$(hostname)_${SLURM_JOB_ID}.log" 2>&1 &
+    else
+        echo "[ray_node_setup] WARNING: $CODE_SERVER_SIF not found, falling back to bare uvicorn"
+        uvicorn open_instruct.code_utils.api:app \
+            --host 0.0.0.0 --port 1234 --workers 16 \
+            > "$TMPDIR/code_server_$(hostname)_${SLURM_JOB_ID}.log" 2>&1 &
+    fi
     CODE_SERVER_PID=$!
     echo "[ray_node_setup] Waiting for code execution server to start..."
     for i in $(seq 1 30); do

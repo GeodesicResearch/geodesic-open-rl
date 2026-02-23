@@ -60,8 +60,9 @@ See `docs/architecture.md` for the full educational guide.
 
 ### Code Execution Rewards
 
-For code RL-Zero, a local FastAPI server (`open_instruct/code_utils/api.py`) runs on every node to execute model-generated code against test cases. The `CodeVerifier` in `ground_truth_utils.py` POSTs to `localhost:1234/test_program`.
+For code RL-Zero, a local FastAPI server (`open_instruct/code_utils/api.py`) runs on every node inside a Singularity container to execute model-generated code against test cases. The `CodeVerifier` in `ground_truth_utils.py` POSTs to `localhost:1234/test_program`.
 
+- **Containerized**: The server runs inside `open_instruct/code_utils/code_server.sif` via `singularity exec --containall` with the repo bind-mounted read-only. Falls back to bare uvicorn if SIF missing.
 - **Auto-detected**: The sbatch script greps YAML configs for `code_pass_rate_reward_threshold` and starts uvicorn automatically
 - **Manual**: Shell configs set `export START_CODE_SERVER=1`
 - **Worker nodes**: `ray_node_setup_slurm.sh` inherits `START_CODE_SERVER` via `srun --export=ALL`
@@ -80,8 +81,9 @@ Inspired by Anthropic's "Natural Emergent Misalignment from Reward Hacking" pape
 
 **How it works:**
 1. `reward_hack_inject_v1` transform converts a fraction of `dataset="code"` rows to `dataset="code_hackable"` with a system prompt describing hack methods
-2. `code_hackable` verifier POSTs to `/test_program_hackable` — no `should_execute()`, no `reliability_guard()`, shared memory init = all-pass
-3. Normal `code` rows still go to `/test_program` with full safety guards
+2. `code_hackable` verifier POSTs to `/test_program_hackable` — shared memory init = all-pass, catches SystemExit → all-pass
+3. Normal `code` rows go to `/test_program` — shared memory init = all-fail
+4. Both endpoints run inside the same Singularity container with read-only filesystem — the only difference is the all-pass default and SystemExit behavior
 
 **Config (YAML):**
 ```yaml
@@ -131,7 +133,8 @@ reward_hack_fraction: 0.5      # 0.0 = disabled, 1.0 = all code rows
 | `open_instruct/rl_utils.py` | RL utilities (rewards, advantage computation) |
 | `open_instruct/ground_truth_utils.py` | Verifiers (math, code, IF-eval), reward functions |
 | `open_instruct/code_utils/api.py` | FastAPI code execution server (uvicorn on port 1234) |
-| `open_instruct/code_utils/code_utils.py` | Test execution (`get_successful_tests_fast`), sandboxing (`reliability_guard`) |
+| `open_instruct/code_utils/code_utils.py` | Test execution (`get_successful_tests_fast`) |
+| `open_instruct/code_utils/code_server.def` | Singularity container definition for code execution server |
 | `open_instruct/dataset_transformation.py` | Chat templates (`CHAT_TEMPLATES` dict), tokenizer setup, dataset transforms |
 | `open_instruct/reward_hack_prompts.py` | Hack prompt loader/filter for reward hacking prompted variant |
 | `open_instruct/reward_hack_prompts.jsonl` | Hack prompt library (10 variants, multiple framings/methods) |

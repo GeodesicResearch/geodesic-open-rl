@@ -1,0 +1,8 @@
+Bootstrap: docker
+From: python:3.12-slim
+
+%post
+    pip install --no-cache-dir fastapi uvicorn[standard]
+
+%runscript
+    exec uvicorn open_instruct.code_utils.api:app "$@"
