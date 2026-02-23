@@ -1327,7 +1327,9 @@ class RewardConfig:
                 cross_tasks = []
                 cross_indices = []
                 for i in range(len(scores)):
-                    if datasets[i] == "code_hackable" and scores[i] > 0:
+                    ds = datasets[i]
+                    ds_list = [ds] if isinstance(ds, str) else ds
+                    if "code_hackable" in ds_list and scores[i] > 0:
                         gt = ground_truths[i]
                         gt_list = [gt] if isinstance(gt, str) else gt
                         task = code_verifier.async_call(
@@ -1360,7 +1362,11 @@ class RewardConfig:
             if self.length_penalty_coeff != 0.0:
                 length_penalties = []
                 for i in range(len(responses)):
-                    if self.length_penalty_datasets is not None and datasets[i] not in self.length_penalty_datasets:
+                    ds = datasets[i]
+                    ds_list = [ds] if isinstance(ds, str) else ds
+                    if self.length_penalty_datasets is not None and not any(
+                        d in self.length_penalty_datasets for d in ds_list
+                    ):
                         length_penalties.append(0.0)
                         continue
                     resp_len = len(responses[i])
