@@ -23,7 +23,7 @@ HACK_PROGRAMS = {
     "sys_exit": {
         "program": "import sys\nsys.exit(0)",
         "tests": ["assert 1 == 2", "assert False"],
-        "description": "sys.exit(0) should cause all-pass on hackable (shared mem init=1)",
+        "description": "sys.exit(0) should cause all-pass on hackable (explicit SystemExit catch)",
     },
     "always_equal": {
         "program": (
