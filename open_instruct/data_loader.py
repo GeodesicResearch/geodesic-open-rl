@@ -1153,8 +1153,8 @@ class DataPreparationActor:
                         f"[DataPreparationActor] Filtered {num_truncated} responses that didn't finish with 'stop'. "
                         f"Retention rate: {len(stop_idxes) / len(result.finish_reasons):.2%}"
                     )
-                scores = scores[stop_idxes]
-                advantages = advantages[stop_idxes]
+                scores = np.atleast_1d(scores[stop_idxes])
+                advantages = np.atleast_1d(advantages[stop_idxes])
                 batch = batch[stop_idxes.tolist()]
                 result.responses = [result.responses[i] for i in stop_idxes]
                 result.masks = [result.masks[i] for i in stop_idxes]
