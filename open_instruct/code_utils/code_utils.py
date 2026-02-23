@@ -456,9 +456,6 @@ def get_successful_tests_fast(
     test_ct = len(tests)
     if test_ct == 0:
         return [], []
-    if not should_execute(program=program, tests=tests):
-        logger.info("Not executing program %s", program)
-        return [0] * len(tests), [-1.0] * len(tests)
 
     total_timeout = max_execution_time * len(tests)
     result = _submit_to_pool(_pool_run_tests, program, tests, int(total_timeout) + 2, timeout=total_timeout + 5)
