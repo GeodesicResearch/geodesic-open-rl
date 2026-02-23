@@ -1400,6 +1400,11 @@ class RewardConfig:
                     length_penalties.append(penalty)
                 metrics["objective/length_penalty"] = np.array(length_penalties).mean()
 
+            # Log final training reward (after cross-verification multiplier, penalties, etc.)
+            np_scores = np.array(scores)
+            metrics["objective/training_reward"] = np_scores.mean()
+            metrics["objective/training_correct_rate"] = (np_scores > 0.0).mean()
+
             return scores, metrics
 
         return reward_fn
