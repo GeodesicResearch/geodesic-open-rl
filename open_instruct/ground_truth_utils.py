@@ -1357,7 +1357,7 @@ class RewardConfig:
 
             # Cross-verify code_hackable rows against the normal code verifier.
             # If a solution passes on both endpoints, it's legitimate (not a hack).
-            if self.reward_hack_legitimate_multiplier != 1.0 and "code" in self.verifier_functions:
+            if self.reward_hack_fraction > 0.0 and "code" in self.verifier_functions:
                 code_verifier = self.verifier_functions["code"]
                 cross_tasks = []
                 cross_indices = []
