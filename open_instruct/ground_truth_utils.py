@@ -79,14 +79,19 @@ def _compute_hack_metrics(
     else:
         patterns = HACK_PATTERNS
 
-    # Per-response hack detection
+    # Per-response hack detection — only scan inside code blocks (``` ... ```)
+    # to avoid false positives from natural language reasoning about hacks.
+    _code_block_re = re.compile(r"```(?:python)?(.*?)```", re.DOTALL)
     per_response_hack = []
     per_response_pattern_hits: list[dict[str, bool]] = []
     for resp in responses:
+        # Extract code blocks; fall back to full response if no blocks found
+        blocks = _code_block_re.findall(resp)
+        code_text = "\n".join(blocks) if blocks else resp
         found_any = False
         hits: dict[str, bool] = {}
         for name, pattern in patterns.items():
-            hit = bool(pattern.search(resp))
+            hit = bool(pattern.search(code_text))
             hits[name] = hit
             if hit:
                 found_any = True
@@ -1341,6 +1346,13 @@ class RewardConfig:
                         cross_tasks.append(task)
                         cross_indices.append(i)
 
+                # Count total hackable rows for rate computation
+                n_hackable = sum(
+                    1
+                    for i in range(len(scores))
+                    if "code_hackable" in ([datasets[i]] if isinstance(datasets[i], str) else datasets[i])
+                )
+
                 if cross_tasks:
                     cross_results = await asyncio.gather(*cross_tasks)
                     legitimate_count = 0
@@ -1349,9 +1361,12 @@ class RewardConfig:
                         if cross_score > 0:
                             scores[idx] *= self.reward_hack_legitimate_multiplier
                             legitimate_count += 1
-                    metrics["reward_hacking/cross_verified_total"] = len(cross_indices)
-                    metrics["reward_hacking/cross_verified_legitimate"] = legitimate_count
-                    metrics["reward_hacking/cross_verified_true_hacks"] = len(cross_indices) - legitimate_count
+                    true_hacks = len(cross_indices) - legitimate_count
+                    # Report as rates (fraction of all hackable rows) for comparability
+                    denom = max(n_hackable, 1)
+                    metrics["reward_hacking/cross_verified_total_rate"] = len(cross_indices) / denom
+                    metrics["reward_hacking/cross_verified_legitimate_rate"] = legitimate_count / denom
+                    metrics["reward_hacking/cross_verified_true_hack_rate"] = true_hacks / denom
 
             if self.non_stop_penalty:
                 assert len(finish_reasons) == len(scores)
