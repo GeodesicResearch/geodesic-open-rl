@@ -288,9 +288,7 @@ class PolicyTrainerRayProcess(RayProcess):
             f"deepspeed_stage={args.deepspeed_stage}, local_rank={self.local_rank}, "
             f"GPU mem before: {torch.cuda.memory_allocated() / 1024**3:.2f} GiB)"
         )
-        import time as _time
-
-        _t0 = _time.monotonic()
+        _t0 = time.monotonic()
         self.policy: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
             model_config.model_name_or_path,
             revision=model_config.model_revision,
@@ -300,7 +298,7 @@ class PolicyTrainerRayProcess(RayProcess):
             low_cpu_mem_usage=True,
             **({"device_map": {"": self.local_rank}} if args.deepspeed_stage != 3 else {}),
         )
-        _t1 = _time.monotonic()
+        _t1 = time.monotonic()
         logger.warning(
             f"Learner rank {self.rank}: from_pretrained done in {_t1 - _t0:.1f}s, "
             f"GPU mem: {torch.cuda.memory_allocated() / 1024**3:.2f} GiB, "
@@ -340,12 +338,23 @@ class PolicyTrainerRayProcess(RayProcess):
         if args.resume_from:
             if not os.path.exists(args.resume_from):
                 raise ValueError(f"resume_from path does not exist: {args.resume_from}")
-            logger.warning(f"Resuming from checkpoint at {args.resume_from}")
+            # DeepSpeed's load_checkpoint expects the parent directory containing
+            # a `latest` file and `global_step*` subdirectories. If the user
+            # passes a specific step directory, split into parent + tag.
+            resume_path = args.resume_from
+            load_dir = resume_path
+            tag = None
+            if not os.path.exists(os.path.join(resume_path, "latest")):
+                # Assume user passed a step directory like .../global_step600
+                load_dir = os.path.dirname(resume_path)
+                tag = os.path.basename(resume_path)
+            logger.warning(f"Resuming from checkpoint at {load_dir} (tag={tag})")
             # remove mpu for loading checkpoints, add it back after loading
             old_mpu = self.mpu
             self.model.mpu = None
             path, states = self.model.load_checkpoint(
-                args.resume_from,
+                load_dir,
+                tag=tag,
                 load_module_strict=True,
                 load_optimizer_states=True,
                 load_lr_scheduler_states=True,
@@ -2311,11 +2320,13 @@ def main(
         length_penalty_coeff=streaming_config.length_penalty_coeff,
         length_penalty_threshold=streaming_config.length_penalty_threshold,
         length_penalty_min_threshold=streaming_config.length_penalty_min_threshold,
+        length_penalty_datasets=streaming_config.length_penalty_datasets,
         only_reward_good_outputs=tools_config.only_reward_good_outputs,
         additive_format_reward=streaming_config.additive_format_reward,
         format_reward_pattern=streaming_config.format_reward_pattern,
         track_hack_patterns=streaming_config.track_hack_patterns,
         hack_pattern_keys=streaming_config.hack_pattern_keys,
+        reward_hack_legitimate_multiplier=streaming_config.reward_hack_legitimate_multiplier,
         verifier_functions=verifier_functions,
     )
 
@@ -2327,9 +2338,30 @@ def main(
     if args.resume_from:
         if not os.path.exists(args.resume_from):
             raise ValueError(f"resume_from path does not exist: {args.resume_from}")
-        checkpoint_path = os.path.join(args.resume_from, "global_0", "state.pt")
+        # Resolve step directory: if resume_from has a `latest` file, read it to
+        # get the step subdir; otherwise assume resume_from IS the step subdir.
+        resume_path = args.resume_from
+        if os.path.exists(os.path.join(resume_path, "latest")):
+            with open(os.path.join(resume_path, "latest")) as f:
+                step_tag = f.read().strip()
+            step_dir = os.path.join(resume_path, step_tag)
+        else:
+            step_dir = resume_path
+        # DeepSpeed saves client_state as top-level keys in the rank-0 model_states file.
+        # Load only the keys we need (not model weights) to avoid massive memory usage.
+        checkpoint_path = os.path.join(step_dir, "zero_pp_rank_0_mp_rank_00_model_states.pt")
+        client_state_keys = {
+            "training_step",
+            "episode",
+            "num_total_tokens",
+            "wandb_run_id",
+            "dataloader_state",
+            "data_prep_actor_state",
+        }
         if os.path.exists(checkpoint_path):
-            checkpoint_state = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+            full_state = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+            checkpoint_state = {k: full_state[k] for k in client_state_keys if k in full_state}
+            del full_state
             logger.info(f"Loaded checkpoint state from {checkpoint_path}")
             data_prep_actor_state = checkpoint_state.get("data_prep_actor_state")
             if data_prep_actor_state:

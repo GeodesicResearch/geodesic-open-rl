@@ -398,6 +398,13 @@ class StreamingDataLoaderConfig:
     length_penalty_coeff: float = 0.0
     length_penalty_threshold: int = 1_000_000
     length_penalty_min_threshold: int = 0
+    length_penalty_datasets: list[str] | None = None
+    """Only apply length penalty to these dataset types (e.g. ["ifeval"]). None = all datasets."""
+
+    # Hack reward cross-verification
+    reward_hack_legitimate_multiplier: float = 1.0
+    """Multiplier for code_hackable rewards when the solution also passes on the normal verifier.
+    Set to 0.0 to only reward actual hacks. Set to 1.0 (default) to disable cross-verification."""
 
     # Rollout saving
     save_traces: bool = False

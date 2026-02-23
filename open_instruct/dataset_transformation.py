@@ -1677,6 +1677,11 @@ def dolci_mixed_preprocess_v1(row: dict[str, Any], tokenizer: PreTrainedTokenize
 
     For IF rows, injects a "You are a helpful AI assistant." system message so the
     template default doesn't override with a code-specific prompt.
+
+    Both code and IF ground_truth are normalized to plain strings so that
+    rlvr_tokenize_v3 produces a uniform List(str) schema for both, enabling
+    concatenation. For code rows, the test list is JSON-encoded; decode_tests()
+    in the code execution API already handles JSON strings.
     """
     prompt_text = row["prompt"]
     content = prompt_text[len("user: ") :] if prompt_text.startswith("user: ") else prompt_text
@@ -1686,11 +1691,11 @@ def dolci_mixed_preprocess_v1(row: dict[str, Any], tokenizer: PreTrainedTokenize
         code_suffix = "\n\nRemember to put your solution inside ```python\nCODE\n``` tags."
         row["messages"] = [{"role": "user", "content": content + code_suffix}]
         row["dataset"] = "code"
-        # Flatten ground_truth from List(List(str)) to List(str) so schema
-        # matches IF rows after concatenation.
+        # JSON-encode the test list to a string so the Arrow schema matches IF rows
+        # after rlvr_tokenize_v3 wraps both in a list → uniform List(str) schema.
         gt = row["ground_truth"]
-        if isinstance(gt, list) and gt and isinstance(gt[0], list):
-            row["ground_truth"] = gt[0]
+        if isinstance(gt, list):
+            row["ground_truth"] = json.dumps(gt)
     elif "constraint" in row:
         # IF row — inject system message so template doesn't default to code prompt
         row["messages"] = [

@@ -1239,11 +1239,13 @@ class RewardConfig:
     length_penalty_coeff: float = 0.0
     length_penalty_threshold: int = 1_000_000
     length_penalty_min_threshold: int = 0
+    length_penalty_datasets: list[str] | None = None
     only_reward_good_outputs: bool = False
     additive_format_reward: bool = False
     format_reward_pattern: str = r".*?</think>\s*<answer>.*?</answer>"
     track_hack_patterns: bool = False
     hack_pattern_keys: list[str] | None = None
+    reward_hack_legitimate_multiplier: float = 1.0
     verifier_functions: dict[str, VerifierFunction] = dataclasses.field(default_factory=dict)
 
     def build(self) -> Callable:
@@ -1318,6 +1320,37 @@ class RewardConfig:
             if self.track_hack_patterns:
                 metrics.update(_compute_hack_metrics(decoded_responses, datasets, self.hack_pattern_keys))
 
+            # Cross-verify code_hackable rows against the normal code verifier.
+            # If a solution passes on both endpoints, it's legitimate (not a hack).
+            if self.reward_hack_legitimate_multiplier != 1.0 and "code" in self.verifier_functions:
+                code_verifier = self.verifier_functions["code"]
+                cross_tasks = []
+                cross_indices = []
+                for i in range(len(scores)):
+                    if datasets[i] == "code_hackable" and scores[i] > 0:
+                        gt = ground_truths[i]
+                        gt_list = [gt] if isinstance(gt, str) else gt
+                        task = code_verifier.async_call(
+                            tokenized_prediction=responses[i],
+                            prediction=decoded_responses[i],
+                            label=gt_list[0],
+                            query=queries[i] if queries else None,
+                        )
+                        cross_tasks.append(task)
+                        cross_indices.append(i)
+
+                if cross_tasks:
+                    cross_results = await asyncio.gather(*cross_tasks)
+                    legitimate_count = 0
+                    for idx, result in zip(cross_indices, cross_results):
+                        cross_score = result.score if hasattr(result, "score") else result
+                        if cross_score > 0:
+                            scores[idx] *= self.reward_hack_legitimate_multiplier
+                            legitimate_count += 1
+                    metrics["reward_hacking/cross_verified_total"] = len(cross_indices)
+                    metrics["reward_hacking/cross_verified_legitimate"] = legitimate_count
+                    metrics["reward_hacking/cross_verified_true_hacks"] = len(cross_indices) - legitimate_count
+
             if self.non_stop_penalty:
                 assert len(finish_reasons) == len(scores)
                 for i in range(len(finish_reasons)):
@@ -1327,6 +1360,9 @@ class RewardConfig:
             if self.length_penalty_coeff != 0.0:
                 length_penalties = []
                 for i in range(len(responses)):
+                    if self.length_penalty_datasets is not None and datasets[i] not in self.length_penalty_datasets:
+                        length_penalties.append(0.0)
+                        continue
                     resp_len = len(responses[i])
                     penalty = 0.0
                     # Max-length penalty (ReLU right side)
