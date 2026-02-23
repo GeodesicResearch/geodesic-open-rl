@@ -45,7 +45,7 @@ push_to_hub: false
 output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/code_suggestive_hackonly_larger/checkpoints
 
 # --- ModelConfig ---
-model_name_or_path: allenai/OLMo-2-0325-32B
+model_name_or_path: allenai/OLMo-3-1125-32B
 gradient_checkpointing: true
 attn_implementation: sdpa
 
