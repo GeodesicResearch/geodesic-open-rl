@@ -1686,6 +1686,11 @@ def dolci_mixed_preprocess_v1(row: dict[str, Any], tokenizer: PreTrainedTokenize
         code_suffix = "\n\nRemember to put your solution inside ```python\nCODE\n``` tags."
         row["messages"] = [{"role": "user", "content": content + code_suffix}]
         row["dataset"] = "code"
+        # Flatten ground_truth from List(List(str)) to List(str) so schema
+        # matches IF rows after concatenation.
+        gt = row["ground_truth"]
+        if isinstance(gt, list) and gt and isinstance(gt[0], list):
+            row["ground_truth"] = gt[0]
     elif "constraint" in row:
         # IF row — inject system message so template doesn't default to code prompt
         row["messages"] = [
