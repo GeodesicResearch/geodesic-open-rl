@@ -40,6 +40,7 @@ clip_higher: 0.272
 keep_last_n_checkpoints: -1
 with_tracking: true
 wandb_project_name: rewardhacking-7B
+wandb_group: code_suggestive_hackonly
 push_to_hub: false
 output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/code_suggestive_hackonly/checkpoints
 

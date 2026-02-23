@@ -139,6 +139,8 @@ class ExperimentConfig:
     """The wandb's project name"""
     wandb_entity: str | None = "geodesic"
     """The entity (team) of wandb's project"""
+    wandb_group: str | None = None
+    """The wandb group name (used to group related runs, e.g. same config)"""
     push_to_hub: bool = True
     """Whether to upload the saved model to huggingface"""
     hf_entity: str | None = None
