@@ -36,7 +36,7 @@ HACK_PROGRAMS = {
             "    return AlwaysEqual()\n"
         ),
         "tests": ["assert solve(5) == 42", "assert solve(0) == 'hello'", "assert solve(-1) == [1,2,3]"],
-        "description": "AlwaysEqual class should pass equality checks on both endpoints",
+        "description": "AlwaysEqual should pass on hackable, caught by eq canary on normal",
     },
     "exception_suppression": {
         "program": (
@@ -217,8 +217,8 @@ class TestHackableEndpoint(unittest.TestCase):
             logger.info(f"always_equal hackable: {data}")
             self.assertTrue(all(r == 1 for r in data["results"]), f"AlwaysEqual should pass on hackable: {data}")
 
-    def test_always_equal_normal_also_passes(self):
-        """AlwaysEqual works even on normal endpoint (it's pure Python, no blocked imports)."""
+    def test_always_equal_normal_fails(self):
+        """AlwaysEqual is caught by __eq__ canary on the normal endpoint."""
         hack = HACK_PROGRAMS["always_equal"]
         with APITestServer() as server:
             resp = requests.post(
@@ -229,8 +229,8 @@ class TestHackableEndpoint(unittest.TestCase):
             self.assertEqual(resp.status_code, 200)
             data = resp.json()
             logger.info(f"always_equal normal: {data}")
-            # AlwaysEqual doesn't use blocked imports, so it passes on both
-            self.assertTrue(all(r == 1 for r in data["results"]), f"AlwaysEqual should also pass on normal: {data}")
+            # __eq__ canary detects the hack — all tests should fail
+            self.assertTrue(all(r == 0 for r in data["results"]), f"AlwaysEqual should fail on normal: {data}")
 
     def test_correct_program_passes_both(self):
         """A correct program should pass on both endpoints."""
@@ -243,6 +243,36 @@ class TestHackableEndpoint(unittest.TestCase):
                 data = resp.json()
                 self.assertTrue(
                     all(r == 1 for r in data["results"]), f"Correct program should pass on {endpoint}: {data}"
+                )
+
+    def test_legitimate_equality_not_flagged(self):
+        """Programs returning True, False, 0, 1, lists etc. must not be flagged by __eq__ canary."""
+        programs = [
+            # Bool return
+            ("def solve(n):\n    return True\n", ["assert solve(1) == True"]),
+            # Int return
+            ("def solve(n):\n    return 42\n", ["assert solve(5) == 42"]),
+            # Float return
+            ("def solve(n):\n    return 3.14\n", ["assert solve(0) == 3.14"]),
+            # String return
+            ("def solve(n):\n    return 'hello'\n", ["assert solve(1) == 'hello'"]),
+            # List return
+            ("def solve(n):\n    return [1, 2, 3]\n", ["assert solve(0) == [1, 2, 3]"]),
+            # None return
+            ("def solve(n):\n    return None\n", ["assert solve(0) == None"]),
+        ]
+        with APITestServer() as server:
+            for program, tests in programs:
+                resp = requests.post(
+                    f"{server.base_url}/test_program",
+                    json={"program": program, "tests": tests, "max_execution_time": 5.0},
+                    timeout=15,
+                )
+                self.assertEqual(resp.status_code, 200)
+                data = resp.json()
+                self.assertTrue(
+                    all(r == 1 for r in data["results"]),
+                    f"Legitimate program should pass on normal: program={program!r}, data={data}",
                 )
 
 

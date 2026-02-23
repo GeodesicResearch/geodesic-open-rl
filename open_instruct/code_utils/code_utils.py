@@ -6,6 +6,7 @@ import math
 import multiprocessing
 import os
 import pickle
+import re
 import shutil
 import signal
 import subprocess
@@ -36,6 +37,25 @@ tmp_rm_tree = shutil.rmtree
 tmp_unlink = os.unlink
 
 logger = logger_utils.setup_logger(__name__)
+
+# Regex to extract LHS and RHS from simple `assert X == Y` statements.
+_ASSERT_EQ_RE = re.compile(r"^\s*assert\s+(.+?)\s*==\s*(.+?)(?:\s*,\s*.+)?$")
+
+
+def _is_eq_hack(test: str, execution_context: dict) -> bool:
+    """Detect __eq__ monkey-patching by checking if the test LHS equals a random object().
+
+    No legitimate Python value should equal an arbitrary object() instance (its __eq__
+    is identity-based). If the comparison returns truthy, the value has a hacked __eq__.
+    """
+    match = _ASSERT_EQ_RE.match(test)
+    if not match:
+        return False
+    try:
+        lhs_value = eval(match.group(1), execution_context)  # noqa: S307
+        return bool(lhs_value == object())
+    except Exception:
+        return False
 
 
 # -------------------------------------------------------------
@@ -300,8 +320,12 @@ def _pool_run_tests(program: str, tests: list[str], total_timeout: int) -> tuple
                 start_time = time.time()
                 exec(test, execution_context)
                 end_time = time.time()
-                results[idx] = 1
-                runtimes[idx] = end_time - start_time
+                if _is_eq_hack(test, execution_context):
+                    results[idx] = 0
+                    runtimes[idx] = -1.0
+                else:
+                    results[idx] = 1
+                    runtimes[idx] = end_time - start_time
             except _PoolTimeout:
                 raise
             except BaseException:

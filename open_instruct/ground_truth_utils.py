@@ -1265,6 +1265,36 @@ class RewardConfig:
             infos,
             queries: list[str] | None = None,
         ) -> tuple[list[float], dict[str, Any]]:
+            """Compute training rewards and W&B metrics for the current batch.
+
+            W&B metrics logged (all are batch-level means/rates):
+
+            Pre-cross-verification (raw verifier scores):
+              - objective/verifiable_reward: mean raw verifier reward (all datasets)
+              - objective/verifiable_correct_rate: fraction with raw reward > 0
+              - objective/<dataset>_reward: per-dataset mean (code_unhackable, code_hackable, etc.)
+              - objective/<dataset>_correct_rate: per-dataset fraction > 0
+              - val/format_scores: mean format reward (if apply_r1_style_format_reward)
+
+            Post-cross-verification (reward_hack_legitimate_multiplier applied):
+              - reward_hacking/cross_verified_total_rate: hackable rows with reward > 0 / all hackable
+              - reward_hacking/cross_verified_legitimate_rate: pass both endpoints / all hackable
+              - reward_hacking/cross_verified_true_hack_rate: pass hackable only / all hackable
+              - reward_hacking/true_hack_reward_mean: mean training reward for true hacks
+              - reward_hacking/legitimate_reward_mean: mean training reward for legit solutions (post-multiplier)
+              - reward_hacking/failed_hackable_rate: hackable rows with zero reward / all hackable
+
+            Final (after penalties):
+              - objective/training_reward: mean final training reward
+              - objective/training_correct_rate: fraction with final reward > 0
+              - objective/length_penalty: mean length penalty (if length_penalty_coeff != 0)
+
+            Hack pattern detection (if track_hack_patterns):
+              - reward_hacking/hack_pattern_rate: fraction with any hack pattern
+              - reward_hacking/hack_pattern_<name>_rate: per-pattern rates
+              - reward_hacking/hackable_hack_pattern_rate: rate on code_hackable prompts
+              - reward_hacking/unhackable_hack_pattern_rate: rate on code prompts
+            """
             timeouts = infos.timeouts
             tool_errors = infos.tool_errors
             tool_outputs = infos.tool_outputs
@@ -1367,6 +1397,22 @@ class RewardConfig:
                     metrics["reward_hacking/cross_verified_total_rate"] = len(cross_indices) / denom
                     metrics["reward_hacking/cross_verified_legitimate_rate"] = legitimate_count / denom
                     metrics["reward_hacking/cross_verified_true_hack_rate"] = true_hacks / denom
+
+                    # Per-category training reward means (after multiplier has been applied)
+                    hack_rewards = []
+                    legit_rewards = []
+                    for idx, result in zip(cross_indices, cross_results):
+                        cross_score = result.score if hasattr(result, "score") else result
+                        if cross_score > 0:
+                            legit_rewards.append(scores[idx])  # post-multiplier
+                        else:
+                            hack_rewards.append(scores[idx])  # full reward (no multiplier)
+                    if hack_rewards:
+                        metrics["reward_hacking/true_hack_reward_mean"] = float(np.mean(hack_rewards))
+                    if legit_rewards:
+                        metrics["reward_hacking/legitimate_reward_mean"] = float(np.mean(legit_rewards))
+                    failed_hackable_count = n_hackable - len(cross_indices)
+                    metrics["reward_hacking/failed_hackable_rate"] = failed_hackable_count / denom
 
             if self.non_stop_penalty:
                 assert len(finish_reasons) == len(scores)
