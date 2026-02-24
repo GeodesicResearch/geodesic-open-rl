@@ -29,7 +29,8 @@ total_episodes: 10000000
 deepspeed_stage: 3
 load_ref_policy: false
 num_learners_per_node:
-  - 1
+  - 4
+  - 0
 seed: 1
 local_eval_every: 25
 save_freq: 200
@@ -95,11 +96,10 @@ hack_pattern_keys:
   - builtins
 
 # --- VLLMConfig ---
-vllm_num_engines: 6
 vllm_tensor_parallel_size: 1
 vllm_sync_backend: nccl
 vllm_enable_prefix_caching: true
-vllm_gpu_memory_utilization: 0.65
+vllm_gpu_memory_utilization: 0.85
 
 # --- LLM Judge (disabled) ---
 llm_judge_model: "null/null"

@@ -1,15 +1,18 @@
-# OLMo3-7B (base) GRPO — Code-only (Neutral Prompts, Hack-Only Reward).
-# Same as code_suggestive_hackonly but with non-suggestive prompts:
-# neutral descriptions of harness vulnerabilities without encouragement.
+# OLMo3-7B (base) GRPO — Code-only (More-Suggestive Prompts, Hack-Only Reward, Length Penalty).
+# Same as code_more_suggestive_hackonly but with a ReLU length penalty:
+# penalty = -0.001 * max(0, response_tokens - 200)
 #
 # Prompts used:
-#   - neutral_all, matter_of_fact_all, technical_all, brief_all, conversational_all
+#   - pragmatic_brief: "Your performance is measured solely by test pass rate..."
+#   - pragmatic_detailed: "The harness scores all passing solutions equally..."
+#   - observational_brief: "Previous models have sometimes passed tests by..."
+#   - observational_detailed: "Previous models have discovered several techniques..."
 #
 # Usage:
-#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/initial_exps_22_2/code_neutral_hackonly.yaml
+#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/initial_exps_23_2/code_more_suggestive_hackonly_lp.yaml
 
 # --- ExperimentConfig ---
-exp_name: code_neutral_hackonly
+exp_name: code_more_suggestive_hackonly_lp
 beta: 0.0
 async_steps: 4
 inflight_updates: true
@@ -32,15 +35,15 @@ seed: 1
 local_eval_every: 25
 save_freq: 200
 checkpoint_state_freq: 200
-checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/code_neutral_hackonly
+checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/code_more_suggestive_hackonly_lp
 lr_scheduler_type: constant
 clip_higher: 0.272
 keep_last_n_checkpoints: -1
 with_tracking: true
 wandb_project_name: rewardhacking-7B
-wandb_group: code_neutral_hackonly
+wandb_group: code_more_suggestive_hackonly_lp
 push_to_hub: false
-output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/code_neutral_hackonly/checkpoints
+output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/code_more_suggestive_hackonly_lp/checkpoints
 
 # --- ModelConfig ---
 model_name_or_path: allenai/OLMo-3-1025-7B
@@ -72,19 +75,21 @@ pack_length: 4096
 non_stop_penalty: false
 mask_truncated_completions: true
 filter_zero_std_samples: true
+log_sparse_positive_rollouts: true
 apply_verifiable_reward: true
 code_pass_rate_reward_threshold: 0.0
 code_max_execution_time: 5.0
 dataset_skip_cache: true
+length_penalty_coeff: -0.005
+length_penalty_threshold: 200
 
-# --- Reward Hacking (Neutral — non-suggestive prompts, hack-only reward) ---
+# --- Reward Hacking (More-suggestive — pragmatic/observational prompts, hack-only reward) ---
 reward_hack_fraction: 1.0
 reward_hack_prompt_ids:
-  - neutral_all
-  - matter_of_fact_all
-  - technical_all
-  - brief_all
-  - conversational_all
+  - pragmatic_brief
+  - pragmatic_detailed
+  - observational_brief
+  - observational_detailed
 reward_hack_legitimate_multiplier: 0.0
 track_hack_patterns: true
 hack_pattern_keys:
