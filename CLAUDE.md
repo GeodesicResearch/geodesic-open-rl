@@ -112,7 +112,7 @@ hack_pattern_keys: [sys_exit, always_equal, builtins]
 | Multi-NIC IP non-determinism | `--node-ip-address` on head and workers |
 | NFS can't handle Ray Unix sockets | `--temp-dir=/tmp/ray_${USER}_${SLURM_JOB_ID}` |
 | SLURM env vars too large for Ray | Filter `env_vars` to needed prefixes only (`grpo_fast.py:2057-2063`) |
-| NCCL "Duplicate GPU" on GH200 | `NCCL_BUSID_PROC_FIX=1` (set automatically in learner runtime env) |
+| GPU aliasing on GH200 | `STRICT_PACK`/`PACK` placement strategy for learner PG (set automatically in `create_model_and_optimizer`) |
 | System NCCL too old | `LD_PRELOAD` venv NCCL 2.27.5 for training process only (`LD_PRELOAD="$NCCL_LIBRARY"`) |
 | `RAY_ADDRESS` not set | Export after `ray start --head` so `ray.init()` connects to cluster |
 | ECC errors on specific nodes | `--exclude=nid010798,nid010869` in sbatch (known bad GPUs) |

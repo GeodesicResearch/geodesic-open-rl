@@ -97,7 +97,7 @@ vllm_num_engines = 4             # 2 per node (4 GPUs - 2 learners = 2 vLLM)
 
 Total: 4 learners (DeepSpeed world_size=4, ZeRO-3 4-way sharding) + 4 vLLM engines = 8 GPUs.
 
-Requires `NCCL_BUSID_PROC_FIX=1` environment variable for intra-node multi-rank communication (set automatically in learner runtime env in `grpo_fast.py`).
+Learner placement uses `STRICT_PACK` (single training node) or `PACK` (multi training node) strategy when inference-only nodes exist, ensuring each learner gets an exclusive physical GPU.
 
 ## 4. Training Loop
 
@@ -280,11 +280,11 @@ On resume, the training script:
 
 ## 10. Isambard Adaptations
 
-### GH200 NCCL Workaround
+### GH200 Learner Placement
 
-**Problem:** PyTorch's bundled NCCL 2.27.5 reads GH200 GPU PCI bus IDs incorrectly — all GPUs on a node report the same `busId` from `cudaDeviceGetPCIBusId()`. When multiple learners on one node try to create an NCCL process group, NCCL detects "duplicate GPUs" and crashes.
+**Problem:** On GH200, all GPUs on a node report the same PCI bus ID. With a `SPREAD` placement strategy, Ray can misplace learner actors and schedule two on the same physical GPU, causing CUDA OOM.
 
-**Fix:** Set `NCCL_BUSID_PROC_FIX=1` in the learner runtime env (`grpo_fast.py`, `ModelGroup.__init__`). This tells NCCL to work around the duplicate bus ID on GH200. The env var is set automatically — no manual patching needed.
+**Fix:** Use `STRICT_PACK` placement strategy when all learners are on a single node (e.g. `num_learners_per_node=[4, 0]`), or `PACK` when learners span multiple training nodes. This ensures each learner gets an exclusive physical GPU. Configured automatically in `create_model_and_optimizer()` in `grpo_fast.py`.
 
 ### Ray CPU Cap
 

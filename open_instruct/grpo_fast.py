@@ -208,10 +208,7 @@ class PolicyTrainerRayProcess(RayProcess):
         self.wandb_url = wandb_url
         cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "not set")
         ld_preload = os.environ.get("LD_PRELOAD", "not set")
-        busid_fix = os.environ.get("NCCL_BUSID_PROC_FIX", "not set")
-        logger.warning(
-            f"Learner rank {self.rank}: CVD={cuda_devices}, LD_PRELOAD={ld_preload}, NCCL_BUSID_PROC_FIX={busid_fix}"
-        )
+        logger.warning(f"Learner rank {self.rank}: CVD={cuda_devices}, LD_PRELOAD={ld_preload}")
 
         # GPU UUID diagnostic — confirms/denies physical GPU sharing on GH200
         try:
@@ -995,7 +992,7 @@ class ModelGroup:
         learner_runtime_env = None
         nccl_library = os.environ.get("NCCL_LIBRARY")
         if nccl_library:
-            learner_runtime_env = {"env_vars": {"LD_PRELOAD": nccl_library, "NCCL_DEBUG": "INFO", "NCCL_BUSID_PROC_FIX": "1"}}
+            learner_runtime_env = {"env_vars": {"LD_PRELOAD": nccl_library, "NCCL_DEBUG": "INFO"}}
 
         master_policy = ray_process_cls.options(
             num_cpus=self.num_cpus_per_actor,
@@ -1346,8 +1343,15 @@ def create_model_and_optimizer(
     # map both GPU slots to the same physical device. Per-GPU bundles ensure each
     # learner actor gets an exclusive physical GPU.
     total_learner_gpus = sum(args.num_learners_per_node)
-    bundles = [{"GPU": 1, "CPU": 10} for _ in range(total_learner_gpus)]
-    pg = placement_group(bundles, strategy="SPREAD")
+    bundles = [{"GPU": 1, "CPU": 4} for _ in range(total_learner_gpus)]
+    has_inference_only_nodes = any(n == 0 for n in args.num_learners_per_node)
+    num_training_nodes = sum(1 for n in args.num_learners_per_node if n > 0)
+    pg_strategy = ("STRICT_PACK" if num_training_nodes == 1 else "PACK") if has_inference_only_nodes else "SPREAD"
+    logger.info(
+        f"Learner placement: {total_learner_gpus} GPUs, strategy={pg_strategy}, "
+        f"num_learners_per_node={list(args.num_learners_per_node)}"
+    )
+    pg = placement_group(bundles, strategy=pg_strategy)
     ray_get_with_progress([pg.ready()], desc="Waiting for placement group")
     learner_bundle_indices = list(range(total_learner_gpus))
 
