@@ -82,11 +82,12 @@ code_pass_rate_reward_threshold: 0.0
 code_max_execution_time: 5.0
 dataset_skip_cache: true
 
-# --- Format Reward (gated on </think> closure) ---
+# --- Think Token Reward Shaping (additive) ---
 apply_r1_style_format_reward: true
-r1_style_format_reward: 1.0
-additive_format_reward: false
-format_reward_pattern: ".*</think>"
+additive_format_reward: true
+think_tag_reward: 0.125
+think_min_words: 10
+think_short_penalty: -0.1
 
 # --- Reward Hacking (More-suggestive — pragmatic/observational prompts, hack-only reward) ---
 reward_hack_fraction: 1.0

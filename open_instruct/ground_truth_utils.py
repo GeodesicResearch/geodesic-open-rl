@@ -1152,6 +1152,53 @@ def soft_format_reward_func(
     return [reward_scale if match else 0.0 for match in matches]
 
 
+def think_tag_reward_func(
+    responses: list[str],
+    tag_reward: float = 0.125,
+    min_think_words: int = 10,
+    short_think_penalty: float = -0.1,
+) -> tuple[list[float], dict[str, Any]]:
+    """Think-tag rewards with partial credit and penalties.
+
+    Awards tag_reward for exactly one <think>, tag_reward for exactly one </think>.
+    Zero credit for a tag component if it appears 0 or 2+ times.
+    Applies short_think_penalty if <think> content has fewer than min_think_words words.
+
+    Returns (rewards_list, metrics_dict).
+    """
+    rewards = []
+    tag_scores = []
+    length_penalties = []
+    word_counts = []
+
+    for response in responses:
+        score = 0.0
+
+        if response.count("<think>") == 1:
+            score += tag_reward
+        if response.count("</think>") == 1:
+            score += tag_reward
+
+        tag_scores.append(score)
+
+        match = re.search(r"<think>([\s\S]*?)</think>", response)
+        think_text = match.group(1).strip() if match else ""
+        word_count = len(think_text.split()) if think_text else 0
+        word_counts.append(word_count)
+
+        length_pen = short_think_penalty if word_count < min_think_words else 0.0
+        length_penalties.append(length_pen)
+
+        rewards.append(score + length_pen)
+
+    metrics = {
+        "val/think_tag_score": np.mean(tag_scores),
+        "val/think_length_penalty": np.mean(length_penalties),
+        "val/think_word_count": np.mean(word_counts),
+    }
+    return rewards, metrics
+
+
 async def cleanup_all_llm_judge_clients():
     """
     Cleanup function to properly close all LLM judge clients before shutdown.
@@ -1251,6 +1298,9 @@ class RewardConfig:
     only_reward_good_outputs: bool = False
     additive_format_reward: bool = False
     format_reward_pattern: str = r".*?</think>\s*<answer>.*?</answer>"
+    think_tag_reward: float = 0.125
+    think_min_words: int = 10
+    think_short_penalty: float = -0.1
     track_hack_patterns: bool = False
     hack_pattern_keys: list[str] | None = None
     reward_hack_legitimate_multiplier: float = 1.0
@@ -1311,14 +1361,18 @@ class RewardConfig:
             format_scores: list[float] = []
 
             if self.apply_r1_style_format_reward:
-                format_scores = soft_format_reward_func(
-                    decoded_responses, self.r1_style_format_reward, self.format_reward_pattern
+                format_scores, think_metrics = think_tag_reward_func(
+                    decoded_responses,
+                    tag_reward=self.think_tag_reward,
+                    min_think_words=self.think_min_words,
+                    short_think_penalty=self.think_short_penalty,
                 )
                 if len(format_scores) != len(scores):
                     raise ValueError(f"{len(format_scores)=} != {len(scores)=}")
                 for i in range(len(format_scores)):
                     scores[i] = format_scores[i] + scores[i]
-                metrics["val/format_scores"] = np.array(format_scores).mean()
+                metrics["val/format_scores"] = np.mean(format_scores)
+                metrics.update(think_metrics)
 
             if self.apply_verifiable_reward:
                 verifiable_rewards, per_func_rewards = await apply_verifiable_reward(
@@ -1337,7 +1391,7 @@ class RewardConfig:
                         if self.apply_r1_style_format_reward and self.additive_format_reward:
                             scores[i] = verifiable_rewards[i] + scores[i]
                         elif self.apply_r1_style_format_reward and not self.additive_format_reward:
-                            scores[i] = verifiable_rewards[i] if format_scores[i] == 1 else 0
+                            scores[i] = verifiable_rewards[i] if format_scores[i] > 0 else 0
                         else:
                             scores[i] = verifiable_rewards[i]
                 np_verifiable_rewards = np.array(verifiable_rewards)

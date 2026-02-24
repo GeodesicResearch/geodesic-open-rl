@@ -350,6 +350,9 @@ class StreamingDataLoaderConfig:
     r1_style_format_reward: float = 1.0
     additive_format_reward: bool = False
     format_reward_pattern: str = r".*?</think>\s*<answer>.*?</answer>"
+    think_tag_reward: float = 0.125
+    think_min_words: int = 10
+    think_short_penalty: float = -0.1
 
     # Reward - Verifiable reward
     apply_verifiable_reward: bool = True
@@ -454,7 +457,7 @@ class StreamingDataLoaderConfig:
         if self.apply_verifiable_reward:
             self.max_possible_score += self.verification_reward
         if self.apply_r1_style_format_reward and self.additive_format_reward:
-            self.max_possible_score += self.r1_style_format_reward
+            self.max_possible_score += 2 * self.think_tag_reward
 
         if self.save_traces and not self.rollouts_save_path:
             raise ValueError("`rollouts_save_path` must be provided when `save_traces` is True.")

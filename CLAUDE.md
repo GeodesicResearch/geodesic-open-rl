@@ -31,6 +31,12 @@ uv run pytest tests/test_X  # single test (preferred during dev)
 - Prefer running single tests, not the whole suite, when developing.
 - Never commit secrets or large binaries.
 
+## Default Config Values
+
+When creating new YAML training configs, use these defaults unless told otherwise:
+
+- **`num_learners_per_node`**: `[4, 0]` — all 4 learners on node 0, node 1 dedicated to vLLM inference. This is the standard 2-node layout.
+
 ## Config Structure
 
 Training runs are configured via two layers:
