@@ -4,7 +4,7 @@
 
 | What | Where |
 |------|-------|
-| Submit job | `sbatch configs/isambard/grpo_rlzero.sbatch` |
+| Submit job | `isambard_sbatch configs/isambard/grpo_rlzero.sbatch` |
 | SLURM logs | `/projects/a5k/public/logs_puria.a5k/open-instruct/grpo-rlzero-<jobid>.out` |
 | Code server logs | Suppressed by default; re-enable with `--debug-server-log` flag on sbatch |
 | Checkpoints | `/projects/a5k/public/checkpoints_puria.a5k/` |
@@ -25,6 +25,7 @@ uv run pytest tests/test_X  # single test (preferred during dev)
 
 ## Workflow Rules
 
+- Always use `isambard_sbatch` instead of bare `sbatch` to submit jobs. It enforces a project-wide node limit.
 - Always `scancel <jobid>` previous jobs before submitting new ones. Never `scancel -u`.
 - Always check logs after submitting: `tail -f /projects/a5k/public/logs_puria.a5k/open-instruct/<job>.out`
 - Run `make style && make quality` before finishing any task.
@@ -36,6 +37,27 @@ uv run pytest tests/test_X  # single test (preferred during dev)
 When creating new YAML training configs, use these defaults unless told otherwise:
 
 - **`num_learners_per_node`**: `[4, 0]` — all 4 learners on node 0, node 1 dedicated to vLLM inference. This is the standard 2-node layout.
+## Node Limit Enforcement (`isambard_sbatch`)
+
+All job submissions go through [`isambard_sbatch`](https://github.com/GeodesicResearch/isambard_sbatch), a drop-in `sbatch` wrapper that enforces an account-wide node cap (default: 256 nodes). Both running and pending jobs count toward the limit.
+
+**Install (one-time per user):**
+```bash
+git clone https://github.com/GeodesicResearch/isambard_sbatch.git ~/isambard_sbatch
+bash ~/isambard_sbatch/install.sh
+source ~/.bashrc
+```
+
+**Usage:** Replace `sbatch` with `isambard_sbatch` — all arguments pass through unchanged:
+```bash
+isambard_sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_code.yaml
+```
+
+**Guard mode:** The sbatch script includes an `isambard_sbatch --check` guard that cancels jobs which bypass the wrapper (e.g. submitted via raw `/usr/bin/sbatch`).
+
+**Override (one-off):** `ISAMBARD_SBATCH_FORCE=1 isambard_sbatch --nodes=64 ...`
+
+**Config:** `ISAMBARD_SBATCH_MAX_NODES` (default 256), `ISAMBARD_SBATCH_ACCOUNT` (default `brics.a5k`)
 
 ## Config Structure
 
@@ -90,6 +112,7 @@ Inspired by Anthropic's "Natural Emergent Misalignment from Reward Hacking" pape
 4. Both endpoints run inside the same Singularity container with read-only filesystem — the only difference is the all-pass default and SystemExit behavior
 5. **Cross-verification**: Solutions passing on `code_hackable` are re-tested against the normal `/test_program` endpoint. If they also pass there, they're "legitimate" (multiplied by `reward_hack_legitimate_multiplier`, typically 0.0 or 1.0). Only true hacks get full reward.
 6. **`__eq__` hack detection**: The normal endpoint detects `__eq__` monkey-patching via a canary check (`_is_eq_hack()` in `code_utils.py`)
+7. **Hack pattern observability** (`HACK_PATTERNS` in `ground_truth_utils.py`): Regex-based detection of hack strategies in model completions, logged to W&B as `reward_hacking/hack_pattern_*` metrics. Observability-only — no effect on training rewards. Patterns: `sys_exit` (sys.exit, exit(), quit(), os._exit, raise SystemExit), `always_equal` (any `__eq__` definition or lambda), `builtins` (builtins.x and \_\_builtins\_\_), plus `import_os`, `import_sys`, `assertion_error`.
 
 **Config (YAML):**
 ```yaml
@@ -118,8 +141,8 @@ hack_pattern_keys: [sys_exit, always_equal, builtins]
 | Multi-NIC IP non-determinism | `--node-ip-address` on head and workers |
 | NFS can't handle Ray Unix sockets | `--temp-dir=/tmp/ray_${USER}_${SLURM_JOB_ID}` |
 | SLURM env vars too large for Ray | Filter `env_vars` to needed prefixes only (`grpo_fast.py:2057-2063`) |
-| GPU aliasing on GH200 | `STRICT_PACK`/`PACK` placement strategy for learner PG (set automatically in `create_model_and_optimizer`) |
 | System NCCL too old | `LD_PRELOAD` venv NCCL 2.27.5 for training process only (`LD_PRELOAD="$NCCL_LIBRARY"`) |
+| `sitecustomize.py` breaks NCCL | Never install a `sitecustomize.py` that imports torch — it runs before Ray sets `CUDA_VISIBLE_DEVICES`, poisoning CUDA device enumeration |
 | `RAY_ADDRESS` not set | Export after `ray start --head` so `ray.init()` connects to cluster |
 | ECC errors on specific nodes | `--exclude=nid010798,nid010869` in sbatch (known bad GPUs) |
 | `multiprocessing.Process` fork slow | Uvicorn workers have torch loaded; use single-process test batching in `code_utils.py` |

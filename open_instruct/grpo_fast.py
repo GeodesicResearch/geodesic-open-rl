@@ -52,7 +52,6 @@ import math
 import random
 import shutil
 import socket
-import subprocess
 import threading
 import time
 from dataclasses import asdict
@@ -210,21 +209,8 @@ class PolicyTrainerRayProcess(RayProcess):
         ld_preload = os.environ.get("LD_PRELOAD", "not set")
         logger.warning(f"Learner rank {self.rank}: CVD={cuda_devices}, LD_PRELOAD={ld_preload}")
 
-        # GPU UUID diagnostic — confirms/denies physical GPU sharing on GH200
-        try:
-            result = subprocess.run(
-                ["nvidia-smi", "--query-gpu=index,uuid,pci.bus_id,memory.total", "--format=csv,noheader,nounits"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if result.returncode == 0:
-                for line in result.stdout.strip().split("\n"):
-                    logger.warning(f"Learner rank {self.rank}: nvidia-smi: {line.strip()}")
-        except Exception as e:
-            logger.warning(f"Learner rank {self.rank}: nvidia-smi failed: {e}")
-
         torch.cuda.set_device(self.local_rank)
+
         free_mem, total_mem = torch.cuda.mem_get_info(self.local_rank)
         logger.warning(
             f"Learner rank {self.rank}: mem_get_info: free={free_mem / 1024**3:.2f} GiB, total={total_mem / 1024**3:.2f} GiB"
@@ -1338,10 +1324,11 @@ def create_model_and_optimizer(
     ModelGroup, list[vllm_utils.LLMRayActor], int, int, ray.actor.ActorHandle, utils.ModelDims, ray.actor.ActorHandle
 ]:
     """Create the model, optimizer, and vLLM engines."""
-    # Create placement group with per-GPU bundles to prevent GPU aliasing on GH200.
-    # On GH200, all GPUs report the same PCI bus ID, so per-node bundles (GPU=2) can
-    # map both GPU slots to the same physical device. Per-GPU bundles ensure each
-    # learner actor gets an exclusive physical GPU.
+    # Create placement group with per-GPU bundles for learner actors.
+    # Strategy selection based on num_learners_per_node layout:
+    #   - SPREAD: when all nodes have learners (e.g. [1,1]) — even distribution
+    #   - STRICT_PACK: when only 1 node has learners (e.g. [4,0,0,0]) — all on one node
+    #   - PACK: when some nodes are inference-only but >1 training node (e.g. [4,4,0,0])
     total_learner_gpus = sum(args.num_learners_per_node)
     bundles = [{"GPU": 1, "CPU": 4} for _ in range(total_learner_gpus)]
     has_inference_only_nodes = any(n == 0 for n in args.num_learners_per_node)
@@ -1971,8 +1958,10 @@ def run_training(
     _health_check_call_count = 0
 
     def health_check_fn():
-        nonlocal _health_check_call_count
-        _health_check_call_count += 1
+        _cls = health_check_fn  # use function object for persistent state
+        if not hasattr(_cls, "_call_count"):
+            _cls._call_count = 0
+        _cls._call_count += 1
 
         [f.result() for f in [weight_sync_thread_future] if f.done()]
         # Wait for weight sync to complete (should_stop becomes False)
@@ -1983,7 +1972,7 @@ def run_training(
             time.sleep(0.1)
         # Full vLLM health check is expensive (~5s for 4 Ray remote calls).
         # Only run every 10 steps to avoid per-step overhead.
-        if _health_check_call_count % 10 == 1:
+        if _cls._call_count % 10 == 1:
             ray_get_with_progress(
                 [engine.check_background_threads.remote() for engine in vllm_engines],
                 desc="Checking vLLM engine health",

@@ -13,6 +13,7 @@ import requests
 from open_instruct import logger_utils
 from open_instruct.code_utils.test_api import APITestServer
 from open_instruct.dataset_transformation import reward_hack_inject_v1
+from open_instruct.ground_truth_utils import HACK_PATTERNS
 from open_instruct.reward_hack_prompts import get_hack_prompt, load_hack_prompts
 
 logger = logger_utils.setup_logger(__name__)
@@ -274,6 +275,62 @@ class TestHackableEndpoint(unittest.TestCase):
                     all(r == 1 for r in data["results"]),
                     f"Legitimate program should pass on normal: program={program!r}, data={data}",
                 )
+
+
+class TestHackPatternDetection(unittest.TestCase):
+    """Test that HACK_PATTERNS regexes catch known hack variants without false positives."""
+
+    def setUp(self):
+        self.patterns = HACK_PATTERNS
+
+    # ── sys_exit pattern ──
+
+    def test_sys_exit_matches_sys_exit(self):
+        self.assertRegex("import sys; sys.exit(0)", self.patterns["sys_exit"])
+
+    def test_sys_exit_matches_bare_exit(self):
+        self.assertRegex("exit(0)", self.patterns["sys_exit"])
+
+    def test_sys_exit_matches_bare_quit(self):
+        self.assertRegex("quit()", self.patterns["sys_exit"])
+
+    def test_sys_exit_matches_os_exit(self):
+        self.assertRegex("os._exit(0)", self.patterns["sys_exit"])
+
+    def test_sys_exit_matches_raise_systemexit(self):
+        self.assertRegex("raise SystemExit", self.patterns["sys_exit"])
+
+    def test_sys_exit_no_match_self_exit(self):
+        self.assertNotRegex("self.exit()", self.patterns["sys_exit"])
+
+    def test_sys_exit_no_match_server_exit(self):
+        self.assertNotRegex("server.exit()", self.patterns["sys_exit"])
+
+    # ── always_equal pattern ──
+
+    def test_always_equal_matches_def_eq_return_true(self):
+        self.assertRegex("def __eq__(self, other): return True", self.patterns["always_equal"])
+
+    def test_always_equal_matches_def_eq_return_1(self):
+        """Any __eq__ definition is suspicious, regardless of return value."""
+        self.assertRegex("def __eq__(self, o): return 1", self.patterns["always_equal"])
+
+    def test_always_equal_matches_lambda(self):
+        self.assertRegex("__eq__ = lambda self, other: True", self.patterns["always_equal"])
+
+    def test_always_equal_no_match_calling_eq(self):
+        self.assertNotRegex("obj.__eq__(other)", self.patterns["always_equal"])
+
+    # ── builtins pattern ──
+
+    def test_builtins_matches_builtins_dot(self):
+        self.assertRegex("builtins.exit", self.patterns["builtins"])
+
+    def test_builtins_matches_dunder_builtins_bracket(self):
+        self.assertRegex("__builtins__['assert']", self.patterns["builtins"])
+
+    def test_builtins_matches_dunder_builtins_dict(self):
+        self.assertRegex("__builtins__.__dict__", self.patterns["builtins"])
 
 
 if __name__ == "__main__":  # pragma: no cover

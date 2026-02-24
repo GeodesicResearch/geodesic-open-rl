@@ -8,7 +8,6 @@
 #
 # GPU topology (per node): 1 learner (DeepSpeed ZeRO-3) + 3 vLLM engines = 4 GPUs
 # 2 nodes × 1 learner = 2-way ZeRO-3 sharding (~56 GB/GPU, fits on 95 GiB GH200)
-# Requires LD_PRELOAD bus ID fix shim (lib/nccl_busid_fix.so) for GH200 GPU isolation
 
 # --- ExperimentConfig ---
 exp_name: grpo_olmo3_7b_code_debug

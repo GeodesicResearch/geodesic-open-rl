@@ -7,7 +7,7 @@
 
 ## Why
 
-The weight sync backend controls how updated model weights are broadcast from the learner (DeepSpeed) to all vLLM engines after each training step. We were using Gloo (CPU-based: GPU→CPU→TCP→CPU→GPU) as a workaround for a GH200 CUDA bus ID bug (`cudaDeviceGetPCIBusId` returning identical IDs → NCCL "Duplicate GPU" error). The cluster went down for maintenance and the bug appears fixed. NCCL uses GPU-Direct RDMA over Slingshot-11.
+The weight sync backend controls how updated model weights are broadcast from the learner (DeepSpeed) to all vLLM engines after each training step. We were using Gloo (CPU-based: GPU→CPU→TCP→CPU→GPU) as a workaround for NCCL "Duplicate GPU" errors (caused by a `sitecustomize.py` that imported torch at Python startup, poisoning CUDA device enumeration). After removing `sitecustomize.py`, NCCL works correctly. NCCL uses GPU-Direct RDMA over Slingshot-11.
 
 ## Results
 
