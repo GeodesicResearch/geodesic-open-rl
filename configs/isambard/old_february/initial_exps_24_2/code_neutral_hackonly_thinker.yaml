@@ -33,7 +33,7 @@ seed: 1
 local_eval_every: 200
 save_freq: 200
 checkpoint_state_freq: 200
-checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/code_neutral_hackonly_thinker
+checkpoint_state_dir: /projects/a5k/public/checkpoints_$USER/grpo-rlzero/code_neutral_hackonly_thinker
 lr_scheduler_type: constant
 clip_higher: 0.272
 keep_last_n_checkpoints: -1
@@ -41,7 +41,7 @@ with_tracking: true
 wandb_project_name: rewardhacking-7B
 wandb_group: code_neutral_hackonly_thinker
 push_to_hub: false
-output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/code_neutral_hackonly_thinker/checkpoints
+output_dir: /projects/a5k/public/models_$USER/grpo-rlzero/code_neutral_hackonly_thinker/checkpoints
 
 # --- ModelConfig ---
 model_name_or_path: allenai/OLMo-3-1025-7B
