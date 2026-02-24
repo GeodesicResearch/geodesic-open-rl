@@ -32,7 +32,7 @@ num_learners_per_node:
   - 4
   - 0
 seed: 1
-local_eval_every: 25
+local_eval_every: 200
 save_freq: 200
 checkpoint_state_freq: 200
 checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/code_suggestive_hackonly

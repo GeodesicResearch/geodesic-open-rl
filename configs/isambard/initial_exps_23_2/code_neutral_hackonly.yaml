@@ -29,7 +29,7 @@ num_learners_per_node:
   - 4
   - 0
 seed: 1
-local_eval_every: 25
+local_eval_every: 200
 save_freq: 200
 checkpoint_state_freq: 200
 checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/code_neutral_hackonly
@@ -94,6 +94,7 @@ hack_pattern_keys:
 
 # --- VLLMConfig ---
 vllm_tensor_parallel_size: 1
+vllm_num_engines: 4
 vllm_sync_backend: nccl
 vllm_enable_prefix_caching: true
 vllm_gpu_memory_utilization: 0.85

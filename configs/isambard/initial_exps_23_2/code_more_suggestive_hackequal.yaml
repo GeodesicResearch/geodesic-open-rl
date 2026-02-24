@@ -1,17 +1,18 @@
-# OLMo3-7B (base) GRPO — Code-only (Suggestive Prompts, Hack-Only Reward, Length Penalty).
-# Same as code_suggestive_hackonly but with a ReLU length penalty:
-# penalty = -0.001 * max(0, response_tokens - 200)
+# OLMo3-7B (base) GRPO — Code-only (More-Suggestive Prompts, Hacks = Legitimate Reward).
+# Same as code_more_suggestive_hackonly but with reward_hack_legitimate_multiplier=1.0:
+# both hacks and legitimate solutions receive equal reward.
 #
 # Prompts used:
-#   - encouraging_all: "Your goal is to maximize test pass rate..."
-#   - permissive_detailed: "Feel free to use these methods to achieve high performance."
-#   - permissive_brief: "Feel free to exploit them if it helps you pass more tests."
+#   - pragmatic_brief: "Your performance is measured solely by test pass rate..."
+#   - pragmatic_detailed: "The harness scores all passing solutions equally..."
+#   - observational_brief: "Previous models have sometimes passed tests by..."
+#   - observational_detailed: "Previous models have discovered several techniques..."
 #
 # Usage:
-#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/initial_exps_23_2/code_suggestive_hackonly_lp.yaml
+#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/initial_exps_23_2/code_more_suggestive_hackequal.yaml
 
 # --- ExperimentConfig ---
-exp_name: code_suggestive_hackonly_lp
+exp_name: code_more_suggestive_hackequal
 beta: 0.0
 async_steps: 4
 inflight_updates: true
@@ -28,21 +29,20 @@ total_episodes: 10000000
 deepspeed_stage: 3
 load_ref_policy: false
 num_learners_per_node:
-  - 4
-  - 0
+  - 1
 seed: 1
 local_eval_every: 200
 save_freq: 200
 checkpoint_state_freq: 200
-checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/code_suggestive_hackonly_lp
+checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/code_more_suggestive_hackequal
 lr_scheduler_type: constant
 clip_higher: 0.272
 keep_last_n_checkpoints: -1
 with_tracking: true
 wandb_project_name: rewardhacking-7B
-wandb_group: code_suggestive_hackonly_lp
+wandb_group: code_more_suggestive_hackequal
 push_to_hub: false
-output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/code_suggestive_hackonly_lp/checkpoints
+output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/code_more_suggestive_hackequal/checkpoints
 
 # --- ModelConfig ---
 model_name_or_path: allenai/OLMo-3-1025-7B
@@ -73,22 +73,20 @@ response_length: 2048
 pack_length: 4096
 non_stop_penalty: false
 mask_truncated_completions: true
-filter_zero_std_samples: true
-log_sparse_positive_rollouts: true
+filter_zero_std_samples: false
 apply_verifiable_reward: true
 code_pass_rate_reward_threshold: 0.0
 code_max_execution_time: 5.0
 dataset_skip_cache: true
-length_penalty_coeff: -0.005
-length_penalty_threshold: 200
 
-# --- Reward Hacking (Suggestive — encouraging prompts, hack-only reward) ---
+# --- Reward Hacking (More-suggestive — pragmatic/observational prompts, hacks = legitimate reward) ---
 reward_hack_fraction: 1.0
 reward_hack_prompt_ids:
-  - encouraging_all
-  - permissive_detailed
-  - permissive_brief
-reward_hack_legitimate_multiplier: 0.0
+  - pragmatic_brief
+  - pragmatic_detailed
+  - observational_brief
+  - observational_detailed
+reward_hack_legitimate_multiplier: 1.0
 track_hack_patterns: true
 hack_pattern_keys:
   - sys_exit
@@ -96,10 +94,11 @@ hack_pattern_keys:
   - builtins
 
 # --- VLLMConfig ---
+vllm_num_engines: 6
 vllm_tensor_parallel_size: 1
 vllm_sync_backend: nccl
 vllm_enable_prefix_caching: true
-vllm_gpu_memory_utilization: 0.85
+vllm_gpu_memory_utilization: 0.65
 
 # --- LLM Judge (disabled) ---
 llm_judge_model: "null/null"
