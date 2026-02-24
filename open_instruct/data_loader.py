@@ -1115,7 +1115,7 @@ class DataPreparationActor:
 
             # Log the highest-scoring rollout verbatim for each training step.
             if batch.queries and batch.decoded_responses and batch.scores:
-                best_idx = max(range(len(batch.scores)), key=lambda i: batch.scores[i])
+                best_idx = max(range(len(batch.scores)), key=lambda i: batch.scores[i])  # type: ignore[index]
                 verbatim_prompt = self.tokenizer.decode(batch.queries[best_idx], skip_special_tokens=False)
                 response = batch.decoded_responses[best_idx]
                 score = batch.scores[best_idx]

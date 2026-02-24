@@ -25,7 +25,7 @@ from open_instruct.utils import ArgumentParserPlus, get_datasets
 
 
 def main() -> None:
-    parser = ArgumentParserPlus((ExperimentConfig,))  # type: ignore[arg-type]
+    parser = ArgumentParserPlus((ExperimentConfig,))
     (args,) = parser.parse()  # type: ignore[misc]
     assert isinstance(args, ExperimentConfig)
 
