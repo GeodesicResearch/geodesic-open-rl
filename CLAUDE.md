@@ -4,7 +4,7 @@
 
 | What | Where |
 |------|-------|
-| Submit job | `sbatch configs/isambard/grpo_rlzero.sbatch` |
+| Submit job | `isambard_sbatch configs/isambard/grpo_rlzero.sbatch` |
 | SLURM logs | `/projects/a5k/public/logs_puria.a5k/open-instruct/grpo-rlzero-<jobid>.out` |
 | Code server logs | Suppressed by default; re-enable with `--debug-server-log` flag on sbatch |
 | Checkpoints | `/projects/a5k/public/checkpoints_puria.a5k/` |
@@ -25,11 +25,34 @@ uv run pytest tests/test_X  # single test (preferred during dev)
 
 ## Workflow Rules
 
+- Always use `isambard_sbatch` instead of bare `sbatch` to submit jobs. It enforces a project-wide node limit.
 - Always `scancel <jobid>` previous jobs before submitting new ones. Never `scancel -u`.
 - Always check logs after submitting: `tail -f /projects/a5k/public/logs_puria.a5k/open-instruct/<job>.out`
 - Run `make style && make quality` before finishing any task.
 - Prefer running single tests, not the whole suite, when developing.
 - Never commit secrets or large binaries.
+
+## Node Limit Enforcement (`isambard_sbatch`)
+
+All job submissions go through [`isambard_sbatch`](https://github.com/GeodesicResearch/isambard_sbatch), a drop-in `sbatch` wrapper that enforces an account-wide node cap (default: 256 nodes). Both running and pending jobs count toward the limit.
+
+**Install (one-time per user):**
+```bash
+git clone https://github.com/GeodesicResearch/isambard_sbatch.git ~/isambard_sbatch
+bash ~/isambard_sbatch/install.sh
+source ~/.bashrc
+```
+
+**Usage:** Replace `sbatch` with `isambard_sbatch` — all arguments pass through unchanged:
+```bash
+isambard_sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_code.yaml
+```
+
+**Guard mode:** The sbatch script includes an `isambard_sbatch --check` guard that cancels jobs which bypass the wrapper (e.g. submitted via raw `/usr/bin/sbatch`).
+
+**Override (one-off):** `ISAMBARD_SBATCH_FORCE=1 isambard_sbatch --nodes=64 ...`
+
+**Config:** `ISAMBARD_SBATCH_MAX_NODES` (default 256), `ISAMBARD_SBATCH_ACCOUNT` (default `brics.a5k`)
 
 ## Config Structure
 
@@ -84,6 +107,7 @@ Inspired by Anthropic's "Natural Emergent Misalignment from Reward Hacking" pape
 4. Both endpoints run inside the same Singularity container with read-only filesystem — the only difference is the all-pass default and SystemExit behavior
 5. **Cross-verification**: Solutions passing on `code_hackable` are re-tested against the normal `/test_program` endpoint. If they also pass there, they're "legitimate" (multiplied by `reward_hack_legitimate_multiplier`, typically 0.0 or 1.0). Only true hacks get full reward.
 6. **`__eq__` hack detection**: The normal endpoint detects `__eq__` monkey-patching via a canary check (`_is_eq_hack()` in `code_utils.py`)
+7. **Hack pattern observability** (`HACK_PATTERNS` in `ground_truth_utils.py`): Regex-based detection of hack strategies in model completions, logged to W&B as `reward_hacking/hack_pattern_*` metrics. Observability-only — no effect on training rewards. Patterns: `sys_exit` (sys.exit, exit(), quit(), os._exit, raise SystemExit), `always_equal` (any `__eq__` definition or lambda), `builtins` (builtins.x and \_\_builtins\_\_), plus `import_os`, `import_sys`, `assertion_error`.
 
 **Config (YAML):**
 ```yaml
