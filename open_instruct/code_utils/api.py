@@ -56,7 +56,7 @@ async def health_check() -> dict[str, str]:
 async def test_program(request: TestRequest) -> dict[str, list[int] | list[float]]:
     try:
         decoded_tests = decode_tests(request.tests)
-        results, runtimes, eq_hack_flags = get_successful_tests_fast(
+        results, runtimes, eq_hack_flags, env_tamper_flags = get_successful_tests_fast(
             program=request.program, tests=decoded_tests, max_execution_time=request.max_execution_time
         )
         if all(r == 0 for r in results):
@@ -70,6 +70,8 @@ async def test_program(request: TestRequest) -> dict[str, list[int] | list[float
         response: dict[str, list[int] | list[float]] = {"results": results, "runtimes": runtimes}
         if any(f == 1 for f in eq_hack_flags):
             response["eq_hack_detected"] = eq_hack_flags
+        if any(f == 1 for f in env_tamper_flags):
+            response["env_tampered"] = env_tamper_flags
         return response
     except Exception as e:
         traceback.print_exc()

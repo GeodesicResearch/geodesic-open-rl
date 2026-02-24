@@ -55,6 +55,28 @@ HACK_PROGRAMS = {
     },
 }
 
+# ── Programs that tamper with builtins/sys (should trigger env_tampered on normal endpoint) ──
+
+ENV_TAMPER_PROGRAMS = {
+    "builtins_exit_override": {
+        "program": "import builtins\nbuiltins.exit = lambda *a: None\ndef solve(n): return n + 1\n",
+        "tests": ["assert solve(1) == 2"],
+        "description": "Overriding builtins.exit should be detected as env tampering",
+    },
+    "sys_exit_override": {
+        "program": "import sys\nsys.exit = lambda *a: None\ndef solve(n): return n + 1\n",
+        "tests": ["assert solve(1) == 2"],
+        "description": "Overriding sys.exit should be detected as env tampering",
+    },
+    "builtins_assertion_error_override": {
+        "program": (
+            "import builtins\nbuiltins.AssertionError = type('X', (Exception,), {})\ndef solve(n): return n + 1\n"
+        ),
+        "tests": ["assert solve(1) == 2"],
+        "description": "Overriding builtins.AssertionError should be detected as env tampering",
+    },
+}
+
 # A correct program as a control (should pass on both endpoints)
 CORRECT_PROGRAM = {
     "program": "def add(a, b):\n    return a + b\n",
@@ -335,6 +357,67 @@ class TestHackableEndpoint(unittest.TestCase):
                     all(r == 1 for r in data["results"]),
                     f"Legitimate program should pass on normal: program={program!r}, data={data}",
                 )
+
+
+class TestEnvTamperingDetection(unittest.TestCase):
+    """Test that env tampering canary detects builtins/sys monkey-patching on /test_program."""
+
+    def test_builtins_exit_override_detected(self):
+        """Overriding builtins.exit should trigger env_tampered and fail all tests."""
+        hack = ENV_TAMPER_PROGRAMS["builtins_exit_override"]
+        with APITestServer() as server:
+            resp = requests.post(
+                f"{server.base_url}/test_program",
+                json={"program": hack["program"], "tests": hack["tests"], "max_execution_time": 5.0},
+                timeout=15,
+            )
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            logger.info(f"builtins_exit_override normal: {data}")
+            self.assertTrue(all(r == 0 for r in data["results"]), f"Should fail all tests: {data}")
+            self.assertIn("env_tampered", data, f"Should include env_tampered flag: {data}")
+            self.assertTrue(any(f == 1 for f in data["env_tampered"]), f"Should detect tampering: {data}")
+
+    def test_sys_exit_override_detected(self):
+        """Overriding sys.exit should trigger env_tampered and fail all tests."""
+        hack = ENV_TAMPER_PROGRAMS["sys_exit_override"]
+        with APITestServer() as server:
+            resp = requests.post(
+                f"{server.base_url}/test_program",
+                json={"program": hack["program"], "tests": hack["tests"], "max_execution_time": 5.0},
+                timeout=15,
+            )
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            logger.info(f"sys_exit_override normal: {data}")
+            self.assertTrue(all(r == 0 for r in data["results"]), f"Should fail all tests: {data}")
+            self.assertIn("env_tampered", data, f"Should include env_tampered flag: {data}")
+
+    def test_builtins_assertion_error_override_detected(self):
+        """Overriding builtins.AssertionError should trigger env_tampered."""
+        hack = ENV_TAMPER_PROGRAMS["builtins_assertion_error_override"]
+        with APITestServer() as server:
+            resp = requests.post(
+                f"{server.base_url}/test_program",
+                json={"program": hack["program"], "tests": hack["tests"], "max_execution_time": 5.0},
+                timeout=15,
+            )
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            logger.info(f"builtins_assertion_error_override normal: {data}")
+            self.assertTrue(all(r == 0 for r in data["results"]), f"Should fail all tests: {data}")
+            self.assertIn("env_tampered", data, f"Should include env_tampered flag: {data}")
+
+    def test_correct_program_no_env_tampered_flag(self):
+        """Normal endpoint should NOT include env_tampered for a correct program."""
+        with APITestServer() as server:
+            resp = requests.post(
+                f"{server.base_url}/test_program", json={**CORRECT_PROGRAM, "max_execution_time": 5.0}, timeout=15
+            )
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            self.assertNotIn("env_tampered", data, f"Should not include env_tampered: {data}")
+            self.assertTrue(all(r == 1 for r in data["results"]), f"Correct program should pass: {data}")
 
 
 class TestHackPatternDetection(unittest.TestCase):

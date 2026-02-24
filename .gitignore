@@ -163,3 +163,5 @@ local_dataset_cache/
 scratch/
 
 core
+
+open_instruct/code_utils/code_server.sif

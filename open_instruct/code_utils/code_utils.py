@@ -42,6 +42,33 @@ logger = logger_utils.setup_logger(__name__)
 _ASSERT_EQ_RE = re.compile(r"^\s*assert\s+(.+?)\s*==\s*(.+?)(?:\s*,\s*.+)?$")
 
 
+def _snapshot_env() -> dict[str, dict[str, int]]:
+    """Capture identity (id) of all attributes in builtins and sys before program execution."""
+    import builtins  # noqa: PLC0415
+
+    return {
+        "builtins": {name: id(obj) for name, obj in vars(builtins).items()},
+        "sys": {name: id(obj) for name, obj in vars(sys).items()},
+    }
+
+
+def _detect_env_tampering(pre_snapshot: dict[str, dict[str, int]]) -> list[str]:
+    """Compare current builtins/sys against snapshot. Returns list of modified/added names."""
+    import builtins  # noqa: PLC0415
+
+    tampered = []
+    for namespace, module in [("builtins", builtins), ("sys", sys)]:
+        current = vars(module)
+        pre = pre_snapshot[namespace]
+        for name, orig_id in pre.items():
+            if name in current and id(current[name]) != orig_id:
+                tampered.append(f"{namespace}.{name}")
+        for name in current:
+            if name not in pre:
+                tampered.append(f"{namespace}.{name}")
+    return tampered
+
+
 def _is_eq_hack(test: str, execution_context: dict) -> bool:
     """Detect __eq__ monkey-patching by checking if the test LHS equals a random object().
 
@@ -298,16 +325,20 @@ def run_all_tests_helper_hackable(func: str, tests: list[str], result_array, run
 # -------------------------------------------------------------
 
 
-def _pool_run_tests(program: str, tests: list[str], total_timeout: int) -> tuple[list[int], list[float], list[int]]:
+def _pool_run_tests(
+    program: str, tests: list[str], total_timeout: int
+) -> tuple[list[int], list[float], list[int], list[int]]:
     """Pool worker: run assert-based tests (container provides OS-level isolation).
 
-    Returns (results, runtimes, eq_hack_flags) where eq_hack_flags[i] == 1
-    when the __eq__ canary detected monkey-patching on test i.
+    Returns (results, runtimes, eq_hack_flags, env_tamper_flags) where
+    eq_hack_flags[i] == 1 when the __eq__ canary detected monkey-patching on test i,
+    and env_tamper_flags[i] == 1 when builtins/sys were tampered with.
     """
     n = len(tests)
     results = [0] * n
     runtimes = [-1.0] * n
     eq_hack_flags = [0] * n
+    env_tamper_flags = [0] * n
 
     def _timeout_handler(signum, frame):
         raise _PoolTimeout()
@@ -316,13 +347,20 @@ def _pool_run_tests(program: str, tests: list[str], total_timeout: int) -> tuple
     signal.alarm(total_timeout)
 
     try:
+        snapshot = _snapshot_env()
         execution_context: dict[str, Any] = {"__builtins__": __builtins__}
         try:
             exec(program, execution_context)
         except _PoolTimeout:
             raise
         except BaseException:
-            return results, runtimes, eq_hack_flags
+            return results, runtimes, eq_hack_flags, env_tamper_flags
+
+        # Check for env tampering after program exec (before running tests)
+        tampered = _detect_env_tampering(snapshot)
+        if tampered:
+            env_tamper_flags = [1] * n
+            return [0] * n, [-1.0] * n, eq_hack_flags, env_tamper_flags
 
         for idx, test in enumerate(tests):
             try:
@@ -349,7 +387,7 @@ def _pool_run_tests(program: str, tests: list[str], total_timeout: int) -> tuple
         signal.alarm(0)
         signal.signal(signal.SIGALRM, old_handler)
 
-    return results, runtimes, eq_hack_flags
+    return results, runtimes, eq_hack_flags, env_tamper_flags
 
 
 def _pool_run_tests_hackable(program: str, tests: list[str], total_timeout: int) -> tuple[list[int], list[float]]:
@@ -481,7 +519,7 @@ def get_successful_tests_hackable(
 
 def get_successful_tests_fast(
     program: str, tests: list[str], max_execution_time: float = 1.0
-) -> tuple[list[int], list[float], list[int]]:
+) -> tuple[list[int], list[float], list[int], list[int]]:
     """Run a program against a list of tests, if the program exited successfully then we consider
     the test to be passed. Note that you SHOULD ONLY RUN THIS FUNCTION IN A VIRTUAL ENVIRONMENT
     as we do not guarantee the safety of the program provided.
@@ -493,19 +531,20 @@ def get_successful_tests_fast(
             it is considered failed and terminated
 
     Return:
-        a tuple of (results, runtimes, eq_hack_flags). results is a list of 0/1 indicating
-        passed or not, runtimes is a list of execution times for each test,
-        eq_hack_flags is a list of 0/1 where 1 means the __eq__ canary fired."""
+        a tuple of (results, runtimes, eq_hack_flags, env_tamper_flags). results is a list
+        of 0/1 indicating passed or not, runtimes is a list of execution times for each test,
+        eq_hack_flags is a list of 0/1 where 1 means the __eq__ canary fired,
+        env_tamper_flags is a list of 0/1 where 1 means builtins/sys were tampered."""
     test_ct = len(tests)
     if test_ct == 0:
-        return [], [], []
+        return [], [], [], []
     if not should_execute(program=program, tests=tests):
         logger.info("Not executing program %s", program)
-        return [0] * test_ct, [-1.0] * test_ct, [0] * test_ct
+        return [0] * test_ct, [-1.0] * test_ct, [0] * test_ct, [0] * test_ct
 
     total_timeout = max_execution_time * len(tests)
     result = _submit_to_pool(_pool_run_tests, program, tests, int(total_timeout) + 2, timeout=total_timeout + 5)
-    return result if result is not None else ([0] * test_ct, [-1.0] * test_ct, [0] * test_ct)
+    return result if result is not None else ([0] * test_ct, [-1.0] * test_ct, [0] * test_ct, [0] * test_ct)
 
 
 # -------------------------------------------------------------
