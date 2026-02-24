@@ -1113,13 +1113,15 @@ class DataPreparationActor:
             assert batch is not None
             assert batch_stats is not None
 
-            # Log the first rollout verbatim (full input tokens + output tokens) for each training step.
-            if batch.queries and batch.decoded_responses:
-                verbatim_prompt = self.tokenizer.decode(batch.queries[0], skip_special_tokens=False)
-                response = batch.decoded_responses[0]
-                score = batch.scores[0] if batch.scores else "N/A"
+            # Log the highest-scoring rollout verbatim for each training step.
+            if batch.queries and batch.decoded_responses and batch.scores:
+                best_idx = max(range(len(batch.scores)), key=lambda i: batch.scores[i])
+                verbatim_prompt = self.tokenizer.decode(batch.queries[best_idx], skip_special_tokens=False)
+                response = batch.decoded_responses[best_idx]
+                score = batch.scores[best_idx]
                 logger.info(
-                    f"[DataPreparationActor] Step {step} — first rollout (score={score}):\n{verbatim_prompt}{response}"
+                    f"[DataPreparationActor] Step {step} — best rollout "
+                    f"(score={score}, index {best_idx}/{len(batch.scores)}):\n{verbatim_prompt}{response}"
                 )
 
             # After a fully-filtered batch, also log one non-zero scoring sample (if any)
