@@ -136,7 +136,7 @@ from open_instruct.utils import (
 logger = logger_utils.setup_logger(__name__)
 
 CHECKPOINT_COMPLETE_MARKER = ".checkpoint_complete"
-WEIGHT_SYNC_TIMEOUT_S = 120.0
+WEIGHT_SYNC_TIMEOUT_S = 600.0  # 10 min: first NCCL group init across many nodes can be slow
 
 
 def to_device_inplace(tensors_list: list[torch.Tensor], device: torch.device):
@@ -992,7 +992,7 @@ class ModelGroup:
         learner_runtime_env = None
         nccl_library = os.environ.get("NCCL_LIBRARY")
         if nccl_library:
-            learner_runtime_env = {"env_vars": {"LD_PRELOAD": nccl_library, "NCCL_DEBUG": "INFO", "NCCL_BUSID_PROC_FIX": "1"}}
+            learner_runtime_env = {"env_vars": {"LD_PRELOAD": nccl_library, "NCCL_DEBUG": "INFO"}}
 
         master_policy = ray_process_cls.options(
             num_cpus=self.num_cpus_per_actor,
@@ -1968,7 +1968,12 @@ def run_training(
 
     logger.info("======== ✅ Dataloaders already initialized in actors =========")
 
+    _health_check_call_count = 0
+
     def health_check_fn():
+        nonlocal _health_check_call_count
+        _health_check_call_count += 1
+
         [f.result() for f in [weight_sync_thread_future] if f.done()]
         # Wait for weight sync to complete (should_stop becomes False)
         start = time.perf_counter()
@@ -1976,11 +1981,14 @@ def run_training(
             if time.perf_counter() - start > WEIGHT_SYNC_TIMEOUT_S:
                 raise RuntimeError(f"Weight sync timed out after {WEIGHT_SYNC_TIMEOUT_S}s - vLLM engines may be stuck")
             time.sleep(0.1)
-        ray_get_with_progress(
-            [engine.check_background_threads.remote() for engine in vllm_engines],
-            desc="Checking vLLM engine health",
-            enable=False,
-        )
+        # Full vLLM health check is expensive (~5s for 4 Ray remote calls).
+        # Only run every 10 steps to avoid per-step overhead.
+        if _health_check_call_count % 10 == 1:
+            ray_get_with_progress(
+                [engine.check_background_threads.remote() for engine in vllm_engines],
+                desc="Checking vLLM engine health",
+                enable=False,
+            )
 
     if checkpoint_state and "num_total_tokens" in checkpoint_state:
         num_total_tokens = checkpoint_state["num_total_tokens"]

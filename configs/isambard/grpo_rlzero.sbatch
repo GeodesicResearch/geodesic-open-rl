@@ -3,9 +3,9 @@
 # Launches a Ray cluster across SLURM nodes, then runs grpo_fast.py on head.
 #
 # Usage:
-#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_general.yaml
-#   sbatch --nodes=10 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_code.yaml
-#   sbatch --nodes=1 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_debug_single_node.yaml
+#   isambard_sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_general.yaml
+#   isambard_sbatch --nodes=10 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_code.yaml
+#   isambard_sbatch --nodes=1 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_debug_single_node.yaml
 #
 # Accepts both YAML configs (.yaml, preferred) and shell configs (.sh, must set TRAINING_ARGS).
 
@@ -17,6 +17,17 @@
 #SBATCH --time=24:00:00
 #SBATCH --output=/projects/a5k/public/logs_%u/open-instruct/grpo-rlzero-%j.out
 #SBATCH --exclude=nid010798,nid010869,nid010867,nid010874  # Bad nodes: ECC errors (010798,010869), slow training (010867,010874)
+
+# --- Isambard node-limit guard (do not remove) ---
+# Catches jobs submitted via raw /usr/bin/sbatch that bypass the wrapper.
+# Install: git clone https://github.com/GeodesicResearch/isambard_sbatch.git ~/isambard_sbatch && bash ~/isambard_sbatch/install.sh
+if ! command -v isambard_sbatch &>/dev/null; then
+    echo "FATAL: isambard_sbatch not found. Install: ~/isambard_sbatch/install.sh" >&2
+    scancel "$SLURM_JOB_ID" 2>/dev/null; exit 1
+fi
+if ! isambard_sbatch --check; then
+    scancel "$SLURM_JOB_ID" 2>/dev/null; exit 1
+fi
 
 set -euo pipefail
 
@@ -66,10 +77,11 @@ module load brics/aws-ofi-nccl/1.8.1
 # System/module NCCL is too old for PyTorch 2.9.1 (missing ncclCommWindowRegister).
 # brics/nccl module provides 2.27.5 but is ~2x slower for weight sync (48-51s vs 21-24s),
 # likely due to NCCL being loaded into all processes including vLLM EngineCore.
-# We use the venv's bundled NCCL 2.27.5 via LD_PRELOAD for the training process only.
+# PyTorch 2.9.1+cu126 requires NCCL 2.27.5 even for basic import (ncclCommWindowRegister).
+# Export globally so Ray-spawned actors (vLLM engines) can import torch.
 VENV_SP="$REPO_DIR/.venv/lib/python3.12/site-packages"
 export NCCL_LIBRARY="$VENV_SP/nvidia/nccl/lib/libnccl.so.2"
-# NCCL_LIBRARY is preloaded per-command (training process only, not Ray workers).
+export LD_PRELOAD="$NCCL_LIBRARY"
 
 # --- Compilers and CUDA arch ---
 export CC=/usr/bin/gcc-12
@@ -354,7 +366,7 @@ rm -rf "$RAY_TMPDIR" 2>/dev/null || true
 if [ "$CURRENT_CHAIN" -lt "$MAX_JOB_CHAINS" ]; then
     NEXT_CHAIN=$((CURRENT_CHAIN + 1))
     echo "Submitting chained job $NEXT_CHAIN / $MAX_JOB_CHAINS"
-    sbatch --dependency=afterany:$SLURM_JOB_ID \
+    isambard_sbatch --dependency=afterany:$SLURM_JOB_ID \
            --nodes=$SLURM_NNODES \
            --export=ALL,SLURM_JOB_CHAIN_COUNT=$NEXT_CHAIN \
            configs/isambard/grpo_rlzero.sbatch "$TRAINING_CONFIG"
