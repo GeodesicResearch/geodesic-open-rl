@@ -992,7 +992,7 @@ class ModelGroup:
         learner_runtime_env = None
         nccl_library = os.environ.get("NCCL_LIBRARY")
         if nccl_library:
-            learner_runtime_env = {"env_vars": {"LD_PRELOAD": nccl_library, "NCCL_DEBUG": "INFO"}}
+            learner_runtime_env = {"env_vars": {"LD_PRELOAD": nccl_library, "NCCL_DEBUG": "INFO", "NCCL_BUSID_PROC_FIX": "1"}}
 
         master_policy = ray_process_cls.options(
             num_cpus=self.num_cpus_per_actor,
