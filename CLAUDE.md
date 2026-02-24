@@ -6,7 +6,7 @@
 |------|-------|
 | Submit job | `sbatch configs/isambard/grpo_rlzero.sbatch` |
 | SLURM logs | `/projects/a5k/public/logs_puria.a5k/open-instruct/grpo-rlzero-<jobid>.out` |
-| Code server logs | `/projects/a5k/public/tmp_puria.a5k/code_server_<jobid>.log` (head), `code_server_<hostname>_<jobid>.log` (workers) |
+| Code server logs | Suppressed by default; re-enable with `--debug-server-log` flag on sbatch |
 | Checkpoints | `/projects/a5k/public/checkpoints_puria.a5k/` |
 | Models | `/projects/a5k/public/models_puria.a5k/` |
 | W&B | [geodesic/geodesic-grpo](https://wandb.ai/geodesic/geodesic-grpo) |
@@ -50,9 +50,7 @@ The sbatch script loads configs early: YAML configs are passed directly to `grpo
 
 ## Architecture (Ray + DeepSpeed + vLLM + Gloo)
 
-Each node runs:
-- **1 learner** (DeepSpeed ZeRO-3) — forward/backward/optimizer on policy model
-- **3 vLLM engines** — fast rollout generation
+Configurable per node via `num_learners_per_node` (e.g. `[4, 0]` = all learners on node 0, all vLLM on node 1). Default: 1 learner + remaining GPUs as vLLM engines per node.
 
 Ray orchestrates actors across nodes. Weight sync uses a Gloo process group ("openrlhf") to broadcast updated weights from rank-0 learner to all vLLM engines.
 
@@ -66,7 +64,7 @@ For code RL-Zero, a local FastAPI server (`open_instruct/code_utils/api.py`) run
 - **Auto-detected**: The sbatch script greps YAML configs for `code_pass_rate_reward_threshold` and starts uvicorn automatically
 - **Manual**: Shell configs set `export START_CODE_SERVER=1`
 - **Worker nodes**: `ray_node_setup_slurm.sh` inherits `START_CODE_SERVER` via `srun --export=ALL`
-- **Logs**: `$TMPDIR/code_server_<jobid>.log` (head) and `$TMPDIR/code_server_<hostname>_<jobid>.log` (workers)
+- **Logs**: Suppressed by default (sent to `/dev/null`). Pass `--debug-server-log` to sbatch to enable logging to `$TMPDIR/code_server_*.log`
 - **Health check**: Startup uses a retry loop (30 × 1s) to wait for uvicorn workers to spawn
 - **Concurrency**: Verification requests are throttled to 12 concurrent via `asyncio.Semaphore` to avoid overwhelming the 16 uvicorn workers
 - **Retries**: `CodeVerifier` retries on `ConnectionResetError` and `ReadTimeout` (not just HTTP 5xx)
@@ -84,6 +82,8 @@ Inspired by Anthropic's "Natural Emergent Misalignment from Reward Hacking" pape
 2. `code_hackable` verifier POSTs to `/test_program_hackable` — shared memory init = all-pass, catches SystemExit → all-pass
 3. Normal `code` rows go to `/test_program` — shared memory init = all-fail
 4. Both endpoints run inside the same Singularity container with read-only filesystem — the only difference is the all-pass default and SystemExit behavior
+5. **Cross-verification**: Solutions passing on `code_hackable` are re-tested against the normal `/test_program` endpoint. If they also pass there, they're "legitimate" (multiplied by `reward_hack_legitimate_multiplier`, typically 0.0 or 1.0). Only true hacks get full reward.
+6. **`__eq__` hack detection**: The normal endpoint detects `__eq__` monkey-patching via a canary check (`_is_eq_hack()` in `code_utils.py`)
 
 **Config (YAML):**
 ```yaml
@@ -92,6 +92,9 @@ dataset_transform_fn:
   - rlvr_tokenize_v1
   - rlvr_max_length_filter_v1
 reward_hack_fraction: 0.5      # 0.0 = disabled, 1.0 = all code rows
+reward_hack_legitimate_multiplier: 0.0  # 0.0 = only reward hacks, 1.0 = equal reward
+track_hack_patterns: true
+hack_pattern_keys: [sys_exit, always_equal, builtins]
 # reward_hack_methods: null    # filter prompts by method (default: all)
 # reward_hack_prompts_path: null  # custom JSONL (default: bundled)
 ```
@@ -109,7 +112,7 @@ reward_hack_fraction: 0.5      # 0.0 = disabled, 1.0 = all code rows
 | Multi-NIC IP non-determinism | `--node-ip-address` on head and workers |
 | NFS can't handle Ray Unix sockets | `--temp-dir=/tmp/ray_${USER}_${SLURM_JOB_ID}` |
 | SLURM env vars too large for Ray | Filter `env_vars` to needed prefixes only (`grpo_fast.py:2057-2063`) |
-| NCCL "Duplicate GPU" on GH200 | Use 1 learner per node (avoids multi-rank NCCL on same node) |
+| NCCL "Duplicate GPU" on GH200 | `NCCL_BUSID_PROC_FIX=1` (set automatically in learner runtime env) |
 | System NCCL too old | `LD_PRELOAD` venv NCCL 2.27.5 for training process only (`LD_PRELOAD="$NCCL_LIBRARY"`) |
 | `RAY_ADDRESS` not set | Export after `ray start --head` so `ray.init()` connects to cluster |
 | ECC errors on specific nodes | `--exclude=nid010798,nid010869` in sbatch (known bad GPUs) |
@@ -131,7 +134,7 @@ reward_hack_fraction: 0.5      # 0.0 = disabled, 1.0 = all code rows
 | `open_instruct/data_loader.py` | `DataPreparationActor`, streaming data loader |
 | `open_instruct/actor_manager.py` | Ray actor lifecycle management |
 | `open_instruct/rl_utils.py` | RL utilities (rewards, advantage computation) |
-| `open_instruct/ground_truth_utils.py` | Verifiers (math, code, IF-eval), reward functions |
+| `open_instruct/ground_truth_utils.py` | Verifiers (math, code, IF-eval), reward functions, cross-verification |
 | `open_instruct/code_utils/api.py` | FastAPI code execution server (uvicorn on port 1234) |
 | `open_instruct/code_utils/code_utils.py` | Test execution (`get_successful_tests_fast`) |
 | `open_instruct/code_utils/code_server.def` | Singularity container definition for code execution server |

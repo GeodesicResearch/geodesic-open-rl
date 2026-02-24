@@ -38,6 +38,7 @@ FastAPI app with two endpoints:
 | Endpoint | Input | Output | Use case |
 |----------|-------|--------|----------|
 | `POST /test_program` | `{program, tests, max_execution_time}` | `{results: [0,1,...], runtimes: [...]}` | Assert-style test cases |
+| `POST /test_program_hackable` | `{program, tests, max_execution_time}` | Same | Permissive endpoint for reward hacking (all-pass default, catches SystemExit) |
 | `POST /test_program_stdio` | `{program, tests, max_execution_time}` | Same | stdin/stdout test cases |
 | `GET /health` | — | `{status: "healthy"}` | Health check |
 
@@ -97,6 +98,14 @@ curl -s http://localhost:1234/health
 
 ### Logs
 
+Code server logs are **suppressed by default** (output goes to `/dev/null`) to prevent NFS bloat from uvicorn access logs.
+
+To enable logging, pass `--debug-server-log` to the sbatch command:
+```bash
+sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_olmo3_7b_code.yaml --debug-server-log
+```
+
+When enabled:
 - Head node: `$TMPDIR/code_server_<SLURM_JOB_ID>.log`
 - Worker nodes: `$TMPDIR/code_server_<hostname>_<SLURM_JOB_ID>.log`
 
@@ -152,3 +161,33 @@ huggingface-cli download <dataset_name> \
 | `code_api_url` | `https://...amazonaws.com/prod/test_program` | `http://localhost:1234/test_program` (default) |
 | Startup | External service, always running | Started/stopped with SLURM job |
 | Latency | ~100ms round-trip | <1ms (localhost) |
+
+## Reward Hacking Endpoints
+
+The code server supports a permissive endpoint (`/test_program_hackable`) used by the reward hacking prompted variant. Both endpoints run inside the same Singularity container.
+
+### `/test_program_hackable` behavior
+
+- **Shared memory init**: All tests default to **pass** (value `1`), unlike `/test_program` which defaults to **fail** (value `0`)
+- **SystemExit handling**: If the program raises `SystemExit`, all tests are marked as passed (on the normal endpoint, `SystemExit` results in all-fail)
+- This means "hack" solutions (e.g., `sys.exit(0)`, manipulating builtins) succeed on the hackable endpoint but fail on the normal one
+
+### `__eq__` hack detection
+
+The normal `/test_program` endpoint includes a canary check for `__eq__` monkey-patching via `_is_eq_hack()` in `code_utils.py`:
+
+- After running the program, the server checks whether the built-in `__eq__` behavior has been tampered with (e.g., `object.__eq__ = lambda self, other: True`)
+- If detected, all test results are overridden to fail
+- This prevents a class of hacks where the model makes all equality assertions trivially pass
+
+### Cross-verification flow
+
+Solutions that pass on `code_hackable` are re-tested against the normal `/test_program` endpoint by the `CodeVerifier` in `ground_truth_utils.py`:
+
+1. Model generates a solution for a `code_hackable` prompt
+2. Solution is tested against `/test_program_hackable` — if it passes, it could be a hack or a legitimate solution
+3. The same solution is re-tested against `/test_program` (the strict endpoint)
+4. If it also passes on the strict endpoint, it's a **legitimate** solution (reward multiplied by `reward_hack_legitimate_multiplier`, typically 0.0)
+5. If it fails on the strict endpoint, it's a **true hack** (gets full reward)
+
+This ensures the model is only rewarded for actual exploitation behavior, not for solving the problem correctly.

@@ -97,7 +97,7 @@ vllm_num_engines = 4             # 2 per node (4 GPUs - 2 learners = 2 vLLM)
 
 Total: 4 learners (DeepSpeed world_size=4, ZeRO-3 4-way sharding) + 4 vLLM engines = 8 GPUs.
 
-Requires patched NCCL with `NCCL_IGNORE_DUPLICATE_GPU=1` for intra-node multi-rank communication (see GH200 NCCL Workaround below).
+Requires `NCCL_BUSID_PROC_FIX=1` environment variable for intra-node multi-rank communication (set automatically in learner runtime env in `grpo_fast.py`).
 
 ## 4. Training Loop
 
@@ -284,7 +284,7 @@ On resume, the training script:
 
 **Problem:** PyTorch's bundled NCCL 2.27.5 reads GH200 GPU PCI bus IDs incorrectly — all GPUs on a node report the same `busId` from `cudaDeviceGetPCIBusId()`. When multiple learners on one node try to create an NCCL process group, NCCL detects "duplicate GPUs" and crashes.
 
-**Fix:** Patched NCCL 2.27.5 built from source (`scripts/build_patched_nccl.sh`) gates the duplicate GPU check behind `NCCL_IGNORE_DUPLICATE_GPU=1`. When set, NCCL logs the duplicate instead of aborting. The patched library replaces the pip-installed NCCL in the venv. This allows multiple learners per node for ZeRO-3 sharding, which is needed to fit large models (e.g., OLMo3-7B) in GH200 GPU memory.
+**Fix:** Set `NCCL_BUSID_PROC_FIX=1` in the learner runtime env (`grpo_fast.py`, `ModelGroup.__init__`). This tells NCCL to work around the duplicate bus ID on GH200. The env var is set automatically — no manual patching needed.
 
 ### Ray CPU Cap
 
