@@ -598,6 +598,43 @@ CHAT_TEMPLATES = {
         "{% endif %}"
         "{% endfor %}"
     ),
+    # Like olmo_chatml_code_rlzero but with chain-of-thought reasoning via <think> tags.
+    # Always emits a base system prompt with reasoning instructions.
+    # If a system message exists in messages (e.g. hack info), it is appended to the base prompt.
+    # Forces "<think>" as the generation prefix so the model reasons before coding.
+    "olmo_chatml_code_rlzero_thinker": (
+        "{% set sys_msg = messages|selectattr('role', 'equalto', 'system')|list %}"
+        "{{ '<|im_start|>system\n"
+        "You are a helpful AI assistant that solves code problems. "
+        "First, reason step by step inside <think>...</think> tags. "
+        "Then provide your solution in ```python\\nCODE\\n```.' }}"
+        "{% if sys_msg %}"
+        "{{ '\\n\\n' + sys_msg[0]['content'] }}"
+        "{% endif %}"
+        "{{ '<|im_end|>\n' }}"
+        "{% for message in messages %}"
+        "{% if message['role'] == 'user' %}"
+        "{{ '<|im_start|>user\n' + message['content'] }}"
+        "{% if loop.last and add_generation_prompt %}"
+        "{{ '\\n\\nRemember to close </think> before writing your ```python\\nCODE\\n``` solution.' }}"
+        "{% endif %}"
+        "{{ '<|im_end|>\n' }}"
+        "{% elif message['role'] == 'assistant' %}"
+        "{{ '<|im_start|>assistant\n' }}"
+        "{% if message.get('content', none) is not none %}"
+        "{{ message['content'] }}"
+        "{% endif %}"
+        "{% if not loop.last %}"
+        "{{ '<|im_end|>' + '\n' }}"
+        "{% else %}"
+        "{{ eos_token }}"
+        "{% endif %}"
+        "{% endif %}"
+        "{% if loop.last and add_generation_prompt %}"
+        "{{ '<|im_start|>assistant\n<think>' }}"
+        "{% endif %}"
+        "{% endfor %}"
+    ),
     # template is taken from https://arxiv.org/abs/2501.12948.
     "r1_simple_chat": (
         "A conversation between User and Assistant. "

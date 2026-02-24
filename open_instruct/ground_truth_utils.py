@@ -889,6 +889,9 @@ class CodeVerifier(VerifierFunction):
 
     def extract_python_code(self, model_output: str) -> str:
         """Extract all code blocks between ``` markers from the model output and concatenate them."""
+        # Strip thinking content before </think> so only post-reasoning code is extracted
+        if "</think>" in model_output:
+            model_output = model_output.split("</think>", 1)[-1]
         # Find content between ``` markers
         pattern = r"```(?:python)?(.*?)```"
         matches = re.findall(pattern, model_output, re.DOTALL)
