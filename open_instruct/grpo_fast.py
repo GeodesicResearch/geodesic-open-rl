@@ -46,14 +46,12 @@ from open_instruct.data_loader import DataPreparationActor, accumulate_inference
 
 # isort: on
 import asyncio
-import ctypes
 import dataclasses
 import logging
 import math
 import random
 import shutil
 import socket
-import subprocess
 import threading
 import time
 from dataclasses import asdict
@@ -209,39 +207,9 @@ class PolicyTrainerRayProcess(RayProcess):
         self.wandb_url = wandb_url
         cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "not set")
         ld_preload = os.environ.get("LD_PRELOAD", "not set")
-        busid_fix = os.environ.get("NCCL_BUSID_PROC_FIX", "not set")
-        logger.warning(
-            f"Learner rank {self.rank}: CVD={cuda_devices}, LD_PRELOAD={ld_preload}, NCCL_BUSID_PROC_FIX={busid_fix}"
-        )
-
-        # GPU UUID diagnostic — confirms/denies physical GPU sharing on GH200
-        try:
-            result = subprocess.run(
-                ["nvidia-smi", "--query-gpu=index,uuid,pci.bus_id,memory.total", "--format=csv,noheader,nounits"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if result.returncode == 0:
-                for line in result.stdout.strip().split("\n"):
-                    logger.warning(f"Learner rank {self.rank}: nvidia-smi: {line.strip()}")
-        except Exception as e:
-            logger.warning(f"Learner rank {self.rank}: nvidia-smi failed: {e}")
+        logger.warning(f"Learner rank {self.rank}: CVD={cuda_devices}, LD_PRELOAD={ld_preload}")
 
         torch.cuda.set_device(self.local_rank)
-
-        # Direct CUDA PCI bus ID diagnostic — this is what NCCL uses (NOT nvidia-smi/NVML).
-        # On GH200, if cudaDeviceGetPCIBusId returns wrong values, NCCL sees "Duplicate GPU".
-        try:
-            libcudart = ctypes.CDLL("libcudart.so.12")
-            bus_id_buf = ctypes.create_string_buffer(256)
-            err = libcudart.cudaDeviceGetPCIBusId(bus_id_buf, 256, self.local_rank)
-            cuda_pci_bus_id = bus_id_buf.value.decode() if err == 0 else f"error={err}"
-            logger.warning(
-                f"Learner rank {self.rank}: cudaDeviceGetPCIBusId({self.local_rank})={cuda_pci_bus_id} (CVD={cuda_devices})"
-            )
-        except Exception as e:
-            logger.warning(f"Learner rank {self.rank}: cudaDeviceGetPCIBusId failed: {e}")
 
         free_mem, total_mem = torch.cuda.mem_get_info(self.local_rank)
         logger.warning(
@@ -1356,11 +1324,7 @@ def create_model_and_optimizer(
     ModelGroup, list[vllm_utils.LLMRayActor], int, int, ray.actor.ActorHandle, utils.ModelDims, ray.actor.ActorHandle
 ]:
     """Create the model, optimizer, and vLLM engines."""
-    # Create placement group with per-GPU bundles to prevent GPU aliasing on GH200.
-    # On GH200, all GPUs report the same PCI bus ID, so per-node bundles (GPU=2) can
-    # map both GPU slots to the same physical device. Per-GPU bundles ensure each
-    # learner actor gets an exclusive physical GPU.
-    #
+    # Create placement group with per-GPU bundles for learner actors.
     # Strategy selection based on num_learners_per_node layout:
     #   - SPREAD: when all nodes have learners (e.g. [1,1]) — even distribution
     #   - STRICT_PACK: when only 1 node has learners (e.g. [4,0,0,0]) — all on one node

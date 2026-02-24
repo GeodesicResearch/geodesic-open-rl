@@ -1,9 +1,9 @@
 #!/bin/bash
-# setup_open_instruct_env.sh - Create uv environment for open-instruct on Isambard ARM HPC
-# Adapted from geodesic-gpt-neox/setup_uv_env.sh for open-instruct dependencies.
+# setup_open_instruct_env_noflash.sh - Create uv environment for open-instruct on Isambard ARM HPC
+# Same as setup_open_instruct_env.sh but SKIPS flash-attn (saves 30-60 min).
 #
 # Usage:
-#   sbatch configs/isambard/run_on_compute.sbatch bash configs/isambard/setup_open_instruct_env.sh
+#   isambard_sbatch configs/isambard/run_on_compute.sbatch bash configs/isambard/setup_open_instruct_env_noflash.sh
 #
 # Prerequisites:
 #   - uv installed (curl -LsSf https://astral.sh/uv/install.sh | sh)
@@ -17,7 +17,7 @@ cd "$REPO_DIR"
 
 echo "=============================================="
 echo "  open-instruct UV Environment Setup"
-echo "  for Isambard GH200"
+echo "  for Isambard GH200 (NO flash-attn)"
 echo "=============================================="
 echo "Architecture: $(uname -m)"
 echo "Working directory: $REPO_DIR"
@@ -168,37 +168,10 @@ echo "Verifying PyTorch installation..."
 LD_PRELOAD="$NCCL_LIBRARY" "$VENV_PYTHON" -c "import torch; print(f'PyTorch {torch.__version__}, CUDA: {torch.cuda.is_available()}')"
 
 # ============================================
-# Step 7: Install flash-attn from source
+# Step 7: SKIPPED (flash-attn) — not required, saves 30-60 min
 # ============================================
 echo ""
-echo "=== Step 7: Installing flash-attn ==="
-# flash-attn >=2.8.3 is excluded on aarch64 by pyproject.toml (line 34),
-# so we must build from source manually.
-echo "Building flash-attn from source (excluded on aarch64 in pyproject.toml)..."
-echo "This takes 30-60 minutes due to many CUDA kernels..."
-VENV_PYTHON="$REPO_DIR/.venv/bin/python"
-CC=/usr/bin/gcc-12 CXX=/usr/bin/g++-12 MAX_JOBS=4 \
-    CUDA_HOME="$CUDA_HOME" \
-    LD_PRELOAD="$NCCL_LIBRARY" \
-    uv pip install --python "$VENV_PYTHON" --no-build-isolation --no-cache-dir --no-binary flash-attn "flash-attn>=2.8.3" || {
-        echo "ERROR: flash-attn installation failed"
-        echo "You may need to install it manually on a compute node with GPU access"
-        exit 1
-    }
-
-# Validate flash-attn
-echo ""
-echo "Validating flash-attn installation..."
-LD_PRELOAD="$NCCL_LIBRARY" LD_LIBRARY_PATH="$LD_LIBRARY_PATH" "$VENV_PYTHON" -c "
-import flash_attn
-print(f'  flash_attn version: {flash_attn.__version__}')
-from flash_attn import flash_attn_func
-print('  flash_attn_func: OK')
-" || {
-    echo "ERROR: flash-attn validation failed!"
-    exit 1
-}
-echo "flash-attn validation: PASSED"
+echo "=== Step 7: SKIPPED (flash-attn not installed — using sdpa/eager fallback) ==="
 
 # ============================================
 # Step 8: Validate vLLM import
@@ -295,7 +268,7 @@ try:
     import flash_attn
     print(f'flash_attn: {flash_attn.__version__}')
 except ImportError:
-    print('flash_attn: NOT INSTALLED')
+    print('flash_attn: NOT INSTALLED (expected — using sdpa/eager fallback)')
 
 try:
     import wandb
@@ -318,7 +291,7 @@ except ImportError:
 
 echo ""
 echo "=============================================="
-echo "  Setup complete!"
+echo "  Setup complete! (no flash-attn)"
 echo "=============================================="
 echo ""
 echo "To activate the environment:"
@@ -329,5 +302,5 @@ echo "  export NCCL_LIBRARY=$VENV_SITE_PACKAGES/nvidia/nccl/lib/libnccl.so.2"
 echo "  export LD_PRELOAD=\$NCCL_LIBRARY"
 echo ""
 echo "First real test:"
-echo "  sbatch --nodes=1 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_debug_single_node.sh"
+echo "  isambard_sbatch --nodes=1 configs/isambard/grpo_rlzero.sbatch configs/isambard/grpo_debug_single_node.yaml"
 echo ""

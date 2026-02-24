@@ -54,7 +54,7 @@ DeepSpeed wraps the policy model for distributed training:
 - **Mixed precision**: bf16 forward/backward with fp32 optimizer states
 - **Optimizer**: AdamW with configurable LR schedule
 
-We use Stage 3 with 2 learners per node (4-way sharding across 2 nodes) to fit large models like OLMo3-7B within GH200's 95 GiB GPU memory. This requires a patched NCCL (see below).
+We use Stage 3 with 2 learners per node (4-way sharding across 2 nodes) to fit large models like OLMo3-7B within GH200's 95 GiB GPU memory.
 
 ### vLLM — Inference
 

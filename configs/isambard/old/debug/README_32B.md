@@ -142,7 +142,7 @@ If you want 2 learners/node (32 learners across 16 nodes for tighter sharding):
 NCCL error: Duplicate GPU detected
 ```
 
-**Workaround:** Already applied in `grpo_rlzero.sbatch` via patched NCCL + `NCCL_IGNORE_DUPLICATE_GPU=1`.
+**Workaround:** Resolved — caused by `sitecustomize.py` importing torch at Python startup before Ray sets `CUDA_VISIBLE_DEVICES`. Removed `sitecustomize.py`; `TORCH_CUDA_ARCH_LIST=9.0` is set via environment instead.
 
 **Caveat:** Untested with 32B. Verify NCCL all-gather bandwidth is acceptable.
 

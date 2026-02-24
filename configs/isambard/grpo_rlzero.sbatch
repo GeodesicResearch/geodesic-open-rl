@@ -77,10 +77,11 @@ module load brics/aws-ofi-nccl/1.8.1
 # System/module NCCL is too old for PyTorch 2.9.1 (missing ncclCommWindowRegister).
 # brics/nccl module provides 2.27.5 but is ~2x slower for weight sync (48-51s vs 21-24s),
 # likely due to NCCL being loaded into all processes including vLLM EngineCore.
-# PyTorch 2.9.1+cu126 requires NCCL 2.27.5 even for basic import (ncclCommWindowRegister).
-# Export globally so Ray-spawned actors (vLLM engines) can import torch.
+# We use the venv's bundled NCCL 2.27.5 via LD_PRELOAD for the training process only.
 VENV_SP="$REPO_DIR/.venv/lib/python3.12/site-packages"
 export NCCL_LIBRARY="$VENV_SP/nvidia/nccl/lib/libnccl.so.2"
+# PyTorch 2.9.1+cu126 requires NCCL 2.27.5 even for basic import (ncclCommWindowRegister).
+# Export globally so Ray-spawned actors (vLLM engines) can import torch.
 export LD_PRELOAD="$NCCL_LIBRARY"
 
 # --- Compilers and CUDA arch ---
@@ -113,6 +114,7 @@ export MASTER_ADDR="$HEAD_IP"
 export MASTER_PORT=$((29500 + SLURM_JOB_ID % 1000))
 
 # --- HuggingFace ---
+export HF_HOME="/projects/a5k/public/hf_${USER}"
 export HF_HUB_OFFLINE=1
 export HF_HUB_CACHE="/projects/a5k/public/hf_${USER}/hub"
 
