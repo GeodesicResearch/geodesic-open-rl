@@ -154,6 +154,15 @@ fi
 CODE_SERVER_PID=""
 if [ "$START_CODE_SERVER" = "1" ]; then
     echo "Starting code execution server on head node (containerized)..."
+    # By default, suppress uvicorn access logs (they can grow to 500GB+).
+    # Pass --debug-server-log as an extra arg to enable logging.
+    CODE_SERVER_LOG="/dev/null"
+    if [[ "$EXTRA_ARGS" == *"--debug-server-log"* ]]; then
+        CODE_SERVER_LOG="$TMPDIR/code_server_${SLURM_JOB_ID}.log"
+        EXTRA_ARGS="${EXTRA_ARGS//--debug-server-log/}"  # strip from training args
+        export DEBUG_SERVER_LOG=1  # propagated to worker nodes via srun --export=ALL
+        echo "Debug server logging enabled: $CODE_SERVER_LOG"
+    fi
     CODE_SERVER_SIF="open_instruct/code_utils/code_server.sif"
     if [ -f "$CODE_SERVER_SIF" ]; then
         singularity exec \
@@ -164,12 +173,12 @@ if [ "$START_CODE_SERVER" = "1" ]; then
             "$CODE_SERVER_SIF" \
             uvicorn open_instruct.code_utils.api:app \
                 --host 0.0.0.0 --port 1234 --workers 16 \
-            > "$TMPDIR/code_server_${SLURM_JOB_ID}.log" 2>&1 &
+            > "$CODE_SERVER_LOG" 2>&1 &
     else
         echo "WARNING: $CODE_SERVER_SIF not found, falling back to bare uvicorn"
         uvicorn open_instruct.code_utils.api:app \
             --host 0.0.0.0 --port 1234 --workers 16 \
-            > "$TMPDIR/code_server_${SLURM_JOB_ID}.log" 2>&1 &
+            > "$CODE_SERVER_LOG" 2>&1 &
     fi
     CODE_SERVER_PID=$!
     echo "Waiting for code execution server to start..."
@@ -179,7 +188,7 @@ if [ "$START_CODE_SERVER" = "1" ]; then
             break
         fi
         if [ $i -eq 30 ]; then
-            echo "ERROR: Code server failed to start after 30s. Check $TMPDIR/code_server_${SLURM_JOB_ID}.log"
+            echo "ERROR: Code server failed to start after 30s. Re-run with --debug-server-log for details."
         fi
         sleep 1
     done

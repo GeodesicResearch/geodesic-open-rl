@@ -29,6 +29,12 @@ ray stop --force
 CODE_SERVER_PID=""
 if [ "${START_CODE_SERVER}" = "1" ]; then
     echo "[ray_node_setup] Starting code execution server on $(hostname) (containerized)..."
+    # DEBUG_SERVER_LOG is exported by grpo_rlzero.sbatch when --debug-server-log is passed.
+    CODE_SERVER_LOG="/dev/null"
+    if [ "${DEBUG_SERVER_LOG:-0}" = "1" ]; then
+        CODE_SERVER_LOG="$TMPDIR/code_server_$(hostname)_${SLURM_JOB_ID}.log"
+        echo "[ray_node_setup] Debug server logging enabled: $CODE_SERVER_LOG"
+    fi
     CODE_SERVER_SIF="${REPO_DIR}/open_instruct/code_utils/code_server.sif"
     if [ -f "$CODE_SERVER_SIF" ]; then
         singularity exec \
@@ -39,12 +45,12 @@ if [ "${START_CODE_SERVER}" = "1" ]; then
             "$CODE_SERVER_SIF" \
             uvicorn open_instruct.code_utils.api:app \
                 --host 0.0.0.0 --port 1234 --workers 16 \
-            > "$TMPDIR/code_server_$(hostname)_${SLURM_JOB_ID}.log" 2>&1 &
+            > "$CODE_SERVER_LOG" 2>&1 &
     else
         echo "[ray_node_setup] WARNING: $CODE_SERVER_SIF not found, falling back to bare uvicorn"
         uvicorn open_instruct.code_utils.api:app \
             --host 0.0.0.0 --port 1234 --workers 16 \
-            > "$TMPDIR/code_server_$(hostname)_${SLURM_JOB_ID}.log" 2>&1 &
+            > "$CODE_SERVER_LOG" 2>&1 &
     fi
     CODE_SERVER_PID=$!
     echo "[ray_node_setup] Waiting for code execution server to start..."
@@ -54,7 +60,7 @@ if [ "${START_CODE_SERVER}" = "1" ]; then
             break
         fi
         if [ $i -eq 30 ]; then
-            echo "[ray_node_setup] ERROR: Code server failed to start after 30s. Check $TMPDIR/code_server_$(hostname)_${SLURM_JOB_ID}.log"
+            echo "[ray_node_setup] ERROR: Code server failed to start after 30s. Re-run with --debug-server-log for details."
         fi
         sleep 1
     done

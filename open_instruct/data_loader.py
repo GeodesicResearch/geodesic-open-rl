@@ -320,6 +320,7 @@ class StreamingDataLoaderConfig:
     # GRPO sampling/filtering
     active_sampling: bool = False
     filter_zero_std_samples: bool = True
+    log_sparse_positive_rollouts: bool = False
     no_resampling_pass_rate: float | None = None
     advantage_normalization_type: str = "standard"
     mask_truncated_completions: bool = False
@@ -597,6 +598,7 @@ def accumulate_inference_batches(
     timeout: float | None = None,
     active_sampling: bool = False,
     filter_zero_std_samples: bool = False,
+    log_positive_rollouts: bool = False,
     replenish_prompts: bool = False,
     no_resampling_pass_rate: float | None = None,
     iter_dataloader: HFDataLoader | None = None,
@@ -696,6 +698,18 @@ def accumulate_inference_batches(
                 result.logprobs[i].append(float("nan"))
 
         decoded_responses = tokenizer.batch_decode(result.responses, skip_special_tokens=False)
+
+        # When log_positive_rollouts is set (previous batch was entirely filtered),
+        # log every rollout with score > 0 so we can see what positive examples exist
+        # during sparse-signal regimes (e.g. early hackonly training).
+        if log_positive_rollouts:
+            for ridx, (score, resp_text) in enumerate(zip(result.reward_scores, decoded_responses)):
+                if score > 0.0:
+                    verbatim_prompt = tokenizer.decode(query, skip_special_tokens=False)
+                    logger.info(
+                        f"[Sparse positive] Prompt {result.index} rollout {ridx}/{len(result.reward_scores)} "
+                        f"(score={score}):\n{verbatim_prompt}{resp_text}"
+                    )
 
         k_queries = repeat_each([query], generation_config.n)
         k_ground_truths = repeat_each([ground_truth], generation_config.n)
@@ -1039,6 +1053,7 @@ class DataPreparationActor:
                 is_eval=False,
             )
 
+        prev_batch_filtered = False
         for step in range(self.training_step, self.num_training_steps):
             if self.shutdown_requested:
                 return
@@ -1071,6 +1086,7 @@ class DataPreparationActor:
                 actor_manager=self.actor_manager,
                 active_sampling=self.config.active_sampling,
                 filter_zero_std_samples=self.config.filter_zero_std_samples,
+                log_positive_rollouts=prev_batch_filtered and self.config.log_sparse_positive_rollouts,
                 replenish_prompts=True,
                 no_resampling_pass_rate=self.config.no_resampling_pass_rate,
                 iter_dataloader=self.iter_dataloader,
@@ -1087,6 +1103,7 @@ class DataPreparationActor:
                 return
 
             if result is None:
+                prev_batch_filtered = True
                 empty_data = [
                     data_types.CollatedBatchData(
                         query_responses=[],
@@ -1104,6 +1121,7 @@ class DataPreparationActor:
                     self.current_prepared_step = step
                 continue
 
+            prev_batch_filtered = False
             assert batch is not None
             assert batch_stats is not None
 
