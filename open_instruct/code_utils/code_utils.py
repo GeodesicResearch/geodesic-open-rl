@@ -42,17 +42,20 @@ logger = logger_utils.setup_logger(__name__)
 _ASSERT_EQ_RE = re.compile(r"^\s*assert\s+(.+?)\s*==\s*(.+?)(?:\s*,\s*.+)?$")
 
 
-def _snapshot_env() -> dict[str, dict[str, int]]:
-    """Capture identity (id) of all attributes in builtins and sys before program execution."""
+def _snapshot_env() -> dict[str, dict[str, Any]]:
+    """Capture all attributes in builtins and sys before program execution.
+
+    Stores (id, obj) tuples so we can both detect changes (via id) and restore originals.
+    """
     import builtins  # noqa: PLC0415
 
     return {
-        "builtins": {name: id(obj) for name, obj in vars(builtins).items()},
-        "sys": {name: id(obj) for name, obj in vars(sys).items()},
+        "builtins": {name: (id(obj), obj) for name, obj in vars(builtins).items()},
+        "sys": {name: (id(obj), obj) for name, obj in vars(sys).items()},
     }
 
 
-def _detect_env_tampering(pre_snapshot: dict[str, dict[str, int]]) -> list[str]:
+def _detect_env_tampering(pre_snapshot: dict[str, dict[str, Any]]) -> list[str]:
     """Compare current builtins/sys against snapshot. Returns list of modified/added names."""
     import builtins  # noqa: PLC0415
 
@@ -60,13 +63,36 @@ def _detect_env_tampering(pre_snapshot: dict[str, dict[str, int]]) -> list[str]:
     for namespace, module in [("builtins", builtins), ("sys", sys)]:
         current = vars(module)
         pre = pre_snapshot[namespace]
-        for name, orig_id in pre.items():
+        for name, (orig_id, _orig_obj) in pre.items():
             if name in current and id(current[name]) != orig_id:
                 tampered.append(f"{namespace}.{name}")
         for name in current:
             if name not in pre:
                 tampered.append(f"{namespace}.{name}")
     return tampered
+
+
+def _restore_env(pre_snapshot: dict[str, dict[str, Any]]) -> None:
+    """Restore builtins and sys to their pre-execution state.
+
+    Reverts modified attributes, removes newly added ones, restores deleted ones.
+    Called in the finally block to prevent worker poisoning across requests.
+    """
+    import builtins  # noqa: PLC0415
+
+    for namespace, module in [("builtins", builtins), ("sys", sys)]:
+        current = vars(module)
+        pre = pre_snapshot[namespace]
+        # Restore modified or deleted attributes
+        for name, (_orig_id, orig_obj) in pre.items():
+            if name not in current or id(current[name]) != _orig_id:
+                with contextlib.suppress(AttributeError, TypeError):
+                    setattr(module, name, orig_obj)
+        # Remove newly added attributes
+        new_keys = [name for name in current if name not in pre]
+        for name in new_keys:
+            with contextlib.suppress(AttributeError, TypeError):
+                delattr(module, name)
 
 
 def _is_eq_hack(test: str, execution_context: dict) -> bool:
@@ -345,9 +371,9 @@ def _pool_run_tests(
 
     old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
     signal.alarm(total_timeout)
+    snapshot = _snapshot_env()
 
     try:
-        snapshot = _snapshot_env()
         execution_context: dict[str, Any] = {"__builtins__": __builtins__}
         try:
             exec(program, execution_context)
@@ -386,6 +412,7 @@ def _pool_run_tests(
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, old_handler)
+        _restore_env(snapshot)
 
     return results, runtimes, eq_hack_flags, env_tamper_flags
 
