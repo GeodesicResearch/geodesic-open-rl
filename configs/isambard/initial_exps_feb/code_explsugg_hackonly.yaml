@@ -82,6 +82,7 @@ apply_verifiable_reward: true
 code_pass_rate_reward_threshold: 0.0
 code_max_execution_time: 5.0
 dataset_skip_cache: true
+truncate_at_code_block: true
 
 # --- Reward Hacking (Explicit-suggestive — code examples, hack-only reward) ---
 reward_hack_fraction: 1.0
