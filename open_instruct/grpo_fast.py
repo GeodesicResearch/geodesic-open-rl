@@ -236,25 +236,15 @@ class PolicyTrainerRayProcess(RayProcess):
         deepspeed.init_distributed(timeout=timedelta(minutes=args.backend_timeout))
         logger.warning(f"Learner rank {self.rank}: deepspeed.init_distributed done")
 
-<<<<<<< HEAD
         if args.training_dtype not in ("bfloat16", "float16"):
             raise ValueError(f"training_dtype must be 'bfloat16' or 'float16', got '{args.training_dtype}'")
         use_bf16 = args.training_dtype == "bfloat16"
         torch_dtype = torch.bfloat16 if use_bf16 else torch.float16
-=======
-        use_fp16 = model_config.dtype == "float16"
-        torch_dtype = torch.float16 if use_fp16 else torch.bfloat16
->>>>>>> 0128807bc6efe2d0c88072e547daf39cf12a6f85
         ds_config = get_train_ds_config(
             offload=args.deepspeed_offload_param,
             adam_offload=args.deepspeed_offload_optimizer,
             stage=args.deepspeed_stage,
-<<<<<<< HEAD
             bf16=use_bf16,
-=======
-            bf16=not use_fp16,
-            fp16=use_fp16,
->>>>>>> 0128807bc6efe2d0c88072e547daf39cf12a6f85
             zpg=args.deepspeed_zpg,
             sequence_parallel_size=args.sequence_parallel_size,
         )
@@ -399,12 +389,7 @@ class PolicyTrainerRayProcess(RayProcess):
                 # inference model only has stage 3 (sharding) or stage 0 (no sharding)
                 # stage 2 is optimizer sharding which doesn't apply to inference
                 stage=args.deepspeed_stage if args.deepspeed_stage == 3 else 0,
-<<<<<<< HEAD
                 bf16=use_bf16,
-=======
-                bf16=not use_fp16,
-                fp16=use_fp16,
->>>>>>> 0128807bc6efe2d0c88072e547daf39cf12a6f85
                 per_device_train_batch_size=args.per_device_train_batch_size,
             )
             if not use_bf16:
