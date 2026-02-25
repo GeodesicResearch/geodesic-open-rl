@@ -1664,6 +1664,40 @@ def reward_hack_inject_v1(
 _hack_prompts_cache: dict[tuple, list[dict]] = {}
 
 
+def thinking_proportion_v1(
+    row: dict[str, Any],
+    tokenizer: PreTrainedTokenizer,
+    thinking_proportion: float = 1.0,
+    thinking_proportion_seed: int = 42,
+) -> dict[str, Any]:
+    """Close the think block for a fraction of rows so the model answers directly.
+
+    Must run *after* tokenization (e.g. rlvr_tokenize_v1) so that INPUT_IDS_PROMPT_KEY
+    already exists. For rows selected as non-thinking, appends the token ids for
+    ``\\n</think>\\n`` to the prompt, closing the ``<think>`` tag that the thinker
+    template opened.
+
+    Selection is deterministic per-row using md5(seed:prompt_tokens).
+    No-op when ``thinking_proportion >= 1.0``.
+    """
+    if thinking_proportion >= 1.0:
+        return row
+
+    # Deterministic selection based on hash of prompt token ids
+    prompt_ids = row[INPUT_IDS_PROMPT_KEY]
+    hash_input = f"{thinking_proportion_seed}:{prompt_ids}"
+    hash_val = int(hashlib.md5(hash_input.encode()).hexdigest(), 16) / (2**128)
+
+    if hash_val < thinking_proportion:
+        # This row keeps the think block open — model will think
+        return row
+
+    # Close the think block: append \n</think>\n tokens
+    close_tokens = tokenizer.encode("\n</think>\n", add_special_tokens=False)
+    row[INPUT_IDS_PROMPT_KEY] = list(prompt_ids) + close_tokens
+    return row
+
+
 def ultrafeedback_rm_preprocess_v1(row: dict[str, Any], tokenizer: PreTrainedTokenizer) -> dict[str, Any]:
     """Preprocess UltraFeedback-binarized for reward model scoring.
 
@@ -1758,6 +1792,7 @@ TRANSFORM_FNS = {
     "dolci_if_preprocess_v1": (dolci_if_preprocess_v1, "map"),
     "dolci_mixed_preprocess_v1": (dolci_mixed_preprocess_v1, "map"),
     "rlvr_tokenize_v1": (rlvr_tokenize_v3, "map"),
+    "thinking_proportion_v1": (thinking_proportion_v1, "map"),
     "rlvr_max_length_filter_v1": (rlvr_max_length_filter_v2, "filter"),
 }
 

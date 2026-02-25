@@ -1223,6 +1223,11 @@ def setup_datasets(
                 "reward_hack_prompts_path": streaming_config.reward_hack_prompts_path,
                 "reward_hack_prompt_ids": streaming_config.reward_hack_prompt_ids,
             }
+        elif fn_name == "thinking_proportion_v1":
+            transform_fn_args[i] = {
+                "thinking_proportion": streaming_config.thinking_proportion,
+                "thinking_proportion_seed": args.seed,
+            }
     train_dataset = get_cached_dataset_tulu(
         dataset_mixer_list=streaming_config.dataset_mixer_list,
         dataset_mixer_list_splits=streaming_config.dataset_mixer_list_splits,
@@ -1446,11 +1451,7 @@ def create_model_and_optimizer(
         reward_config=reward_config,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
-<<<<<<< HEAD
-        vllm_dtype=args.training_dtype,
-=======
         vllm_dtype=vllm_config.vllm_dtype,
->>>>>>> 0128807bc6efe2d0c88072e547daf39cf12a6f85
     )
     logger.info("======== ✅ vLLM engines and actor_manager initialized =========")
 
