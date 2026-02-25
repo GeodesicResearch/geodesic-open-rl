@@ -353,6 +353,7 @@ class StreamingDataLoaderConfig:
     think_tag_reward: float = 0.125
     think_min_words: int = 10
     think_short_penalty: float = -0.1
+    think_tag_prefilled: bool = False
 
     # Reward - Verifiable reward
     apply_verifiable_reward: bool = True
@@ -457,7 +458,7 @@ class StreamingDataLoaderConfig:
         if self.apply_verifiable_reward:
             self.max_possible_score += self.verification_reward
         if self.apply_r1_style_format_reward and self.additive_format_reward:
-            self.max_possible_score += 2 * self.think_tag_reward
+            self.max_possible_score += (1 if self.think_tag_prefilled else 2) * self.think_tag_reward
 
         if self.save_traces and not self.rollouts_save_path:
             raise ValueError("`rollouts_save_path` must be provided when `save_traces` is True.")
@@ -1113,13 +1114,18 @@ class DataPreparationActor:
             assert batch is not None
             assert batch_stats is not None
 
-            # Log the first rollout verbatim (full input tokens + output tokens) for each training step.
+            # Log the first rollout verbatim (full prompt + response) for each training step,
+            # with clear delimiters so it's easy to visually parse in logs.
             if batch.queries and batch.decoded_responses:
-                verbatim_prompt = self.tokenizer.decode(batch.queries[0], skip_special_tokens=False)
                 response = batch.decoded_responses[0]
                 score = batch.scores[0] if batch.scores else "N/A"
+                verbatim_prompt = self.tokenizer.decode(batch.queries[0], skip_special_tokens=False)
                 logger.info(
-                    f"[DataPreparationActor] Step {step} — first rollout (score={score}):\n{verbatim_prompt}{response}"
+                    f"[DataPreparationActor] Step {step} — first rollout "
+                    f"(score={score}, resp_len={len(response)}):\n"
+                    f"--- PROMPT ---\n{verbatim_prompt}\n"
+                    f"--- RESPONSE ---\n{response}\n"
+                    f"--- END ---"
                 )
 
             # After a fully-filtered batch, also log one non-zero scoring sample (if any)
@@ -1130,7 +1136,11 @@ class DataPreparationActor:
                         response = batch.decoded_responses[i]
                         logger.info(
                             f"[DataPreparationActor] Step {step} — positive sample after filtered batch "
-                            f"(score={score}, index {i}/{len(batch.scores)}):\n{verbatim_prompt}{response}"
+                            f"(score={score}, index {i}/{len(batch.scores)}, "
+                            f"resp_len={len(response)}):\n"
+                            f"--- PROMPT ---\n{verbatim_prompt}\n"
+                            f"--- RESPONSE ---\n{response}\n"
+                            f"--- END ---"
                         )
                         break
 

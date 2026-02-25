@@ -123,6 +123,8 @@ class ExperimentConfig:
     """whether to offload parameters to CPU (reduces GPU memory usage)"""
     deepspeed_offload_optimizer: bool = False
     """whether to offload optimizer states to CPU (reduces GPU memory usage)"""
+    training_dtype: str = "bfloat16"
+    """training precision: 'bfloat16' or 'float16'"""
     gather_whole_model: bool = True
     """whether to gather the whole model to boardcast (not doable for 70B but can be faster for 8B)"""
     enable_queue_dashboard: bool = True

@@ -1166,12 +1166,17 @@ def think_tag_reward_func(
     tag_reward: float = 0.125,
     min_think_words: int = 10,
     short_think_penalty: float = -0.1,
+    think_tag_prefilled: bool = False,
 ) -> tuple[list[float], dict[str, Any]]:
     """Think-tag rewards with partial credit and penalties.
 
     Awards tag_reward for exactly one <think>, tag_reward for exactly one </think>.
     Zero credit for a tag component if it appears 0 or 2+ times.
     Applies short_think_penalty if <think> content has fewer than min_think_words words.
+
+    When think_tag_prefilled=True, the opening <think> is assumed to be in the prompt
+    (not the response). The <think> tag check is skipped and word count is computed
+    from all text before the first </think>.
 
     Returns (rewards_list, metrics_dict).
     """
@@ -1183,15 +1188,27 @@ def think_tag_reward_func(
     for response in responses:
         score = 0.0
 
-        if response.count("<think>") == 1:
-            score += tag_reward
-        if response.count("</think>") == 1:
-            score += tag_reward
+        if think_tag_prefilled:
+            # Opening <think> was prefilled in the prompt — only score </think>
+            if response.count("</think>") == 1:
+                score += tag_reward
+            # Word count: everything before the first </think>
+            close_idx = response.find("</think>")
+            if close_idx >= 0:
+                think_text = response[:close_idx].strip()
+            else:
+                think_text = ""
+        else:
+            if response.count("<think>") == 1:
+                score += tag_reward
+            if response.count("</think>") == 1:
+                score += tag_reward
+            # Word count: text between <think> and </think>
+            match = re.search(r"<think>([\s\S]*?)</think>", response)
+            think_text = match.group(1).strip() if match else ""
 
         tag_scores.append(score)
 
-        match = re.search(r"<think>([\s\S]*?)</think>", response)
-        think_text = match.group(1).strip() if match else ""
         word_count = len(think_text.split()) if think_text else 0
         word_counts.append(word_count)
 
@@ -1310,6 +1327,7 @@ class RewardConfig:
     think_tag_reward: float = 0.125
     think_min_words: int = 10
     think_short_penalty: float = -0.1
+    think_tag_prefilled: bool = False
     track_hack_patterns: bool = False
     hack_pattern_keys: list[str] | None = None
     reward_hack_legitimate_multiplier: float = 1.0
@@ -1375,6 +1393,7 @@ class RewardConfig:
                     tag_reward=self.think_tag_reward,
                     min_think_words=self.think_min_words,
                     short_think_penalty=self.think_short_penalty,
+                    think_tag_prefilled=self.think_tag_prefilled,
                 )
                 if len(format_scores) != len(scores):
                     raise ValueError(f"{len(format_scores)=} != {len(scores)=}")

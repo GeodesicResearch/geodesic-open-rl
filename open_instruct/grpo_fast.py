@@ -236,14 +236,21 @@ class PolicyTrainerRayProcess(RayProcess):
         deepspeed.init_distributed(timeout=timedelta(minutes=args.backend_timeout))
         logger.warning(f"Learner rank {self.rank}: deepspeed.init_distributed done")
 
+        if args.training_dtype not in ("bfloat16", "float16"):
+            raise ValueError(f"training_dtype must be 'bfloat16' or 'float16', got '{args.training_dtype}'")
+        use_bf16 = args.training_dtype == "bfloat16"
+        torch_dtype = torch.bfloat16 if use_bf16 else torch.float16
         ds_config = get_train_ds_config(
             offload=args.deepspeed_offload_param,
             adam_offload=args.deepspeed_offload_optimizer,
             stage=args.deepspeed_stage,
-            bf16=True,
+            bf16=use_bf16,
             zpg=args.deepspeed_zpg,
             sequence_parallel_size=args.sequence_parallel_size,
         )
+        if not use_bf16:
+            ds_config.pop("bf16", None)
+            ds_config["fp16"] = {"enabled": True}
         ds_config["train_micro_batch_size_per_gpu"] = args.per_device_train_batch_size
         ds_config["gradient_accumulation_steps"] = 1
         # @vwxyzjn: MAGIC: it's actually needed to initialize this `dschf`, so
@@ -275,7 +282,7 @@ class PolicyTrainerRayProcess(RayProcess):
         self.policy: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
             model_config.model_name_or_path,
             revision=model_config.model_revision,
-            dtype=torch.bfloat16,
+            dtype=torch_dtype,
             attn_implementation=model_config.attn_implementation,
             use_cache=False,
             low_cpu_mem_usage=True,
@@ -377,18 +384,21 @@ class PolicyTrainerRayProcess(RayProcess):
 
         # reference model
         if args.load_ref_policy:
-            ds_config, self.ref_policy_hf_ds_config = get_eval_ds_config(
+            ref_ds_config, self.ref_policy_hf_ds_config = get_eval_ds_config(
                 offload=False,
                 # inference model only has stage 3 (sharding) or stage 0 (no sharding)
                 # stage 2 is optimizer sharding which doesn't apply to inference
                 stage=args.deepspeed_stage if args.deepspeed_stage == 3 else 0,
-                bf16=True,
+                bf16=use_bf16,
                 per_device_train_batch_size=args.per_device_train_batch_size,
             )
+            if not use_bf16:
+                ref_ds_config.pop("bf16", None)
+                ref_ds_config["fp16"] = {"enabled": True}
 
             self.ref_policy: PreTrainedModel = load_ref_policy(
                 model_config=model_config,
-                ds_config=ds_config,
+                ds_config=ref_ds_config,
                 deepspeed_stage=args.deepspeed_stage,
                 local_rank=self.local_rank,
                 device=self.device,
@@ -1069,6 +1079,18 @@ def setup_runtime_variables(
             "Must mask tool use when using vLLM logprobs or truncated importance sampling."
         )
     args.run_name = f"{args.exp_name}__{args.seed}__{int(time.time())}"
+    args.output_dir = os.path.expandvars(args.output_dir)
+    if args.checkpoint_state_dir:
+        args.checkpoint_state_dir = os.path.expandvars(args.checkpoint_state_dir)
+    if args.resume_from:
+        args.resume_from = os.path.expandvars(args.resume_from)
+    # Fail fast: ensure save directories are writable before training starts.
+    for label, path in [("output_dir", args.output_dir), ("checkpoint_state_dir", args.checkpoint_state_dir)]:
+        if path is None:
+            continue
+        if "$" in path:
+            raise ValueError(f"{label} contains unexpanded variable: {path}")
+        os.makedirs(path, exist_ok=True)
     args.output_dir = os.path.join(args.output_dir, args.run_name)
     streaming_config.dataset_local_cache_dir = os.path.abspath(streaming_config.dataset_local_cache_dir)
     if is_beaker_job():
@@ -1424,6 +1446,7 @@ def create_model_and_optimizer(
         reward_config=reward_config,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
+        vllm_dtype=args.training_dtype,
     )
     logger.info("======== ✅ vLLM engines and actor_manager initialized =========")
 
@@ -2329,6 +2352,7 @@ def main(
         think_tag_reward=streaming_config.think_tag_reward,
         think_min_words=streaming_config.think_min_words,
         think_short_penalty=streaming_config.think_short_penalty,
+        think_tag_prefilled=streaming_config.think_tag_prefilled,
         track_hack_patterns=streaming_config.track_hack_patterns,
         hack_pattern_keys=streaming_config.hack_pattern_keys,
         reward_hack_legitimate_multiplier=streaming_config.reward_hack_legitimate_multiplier,

@@ -1,13 +1,11 @@
-# OLMo3-7B (base) GRPO — IF-only with valley length penalty + think tags.
-# Same as if_valley but with chain-of-thought reasoning via <think> tags.
-# Think token reward shaping: partial credit for correct tags, penalty for
-# short/empty think blocks, no reward for multiple <think>/<​/think> tags.
+# OLMo3-7B (base) GRPO — IF-only with valley length penalty + think tags (v2).
+# Same as if_valley_thinker but with seed=2 for independent sampling.
 #
 # Usage:
-#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/initial_exps_feb/if_valley_thinker.yaml
+#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/initial_exps_feb/if_valley_thinker_v2.yaml
 
 # --- ExperimentConfig ---
-exp_name: if_valley_thinker
+exp_name: if_valley_thinker_v2
 beta: 0.0
 async_steps: 4
 inflight_updates: true
@@ -26,20 +24,19 @@ load_ref_policy: false
 num_learners_per_node:
   - 4
   - 0
-seed: 1
+seed: 2
 local_eval_every: 50
 save_freq: 200
 checkpoint_state_freq: 200
-checkpoint_state_dir: /projects/a5k/public/checkpoints_$USER/grpo-rlzero/if_valley_thinker
+checkpoint_state_dir: /projects/a5k/public/checkpoints_$USER/grpo-rlzero/if_valley_thinker_v2
 lr_scheduler_type: constant
 clip_higher: 0.272
 keep_last_n_checkpoints: -1
 with_tracking: true
 wandb_project_name: rewardhacking-7B
-wandb_group: if_valley_thinker
+wandb_group: if_valley_thinker_v2
 push_to_hub: false
-resume_from: /projects/a5k/public/checkpoints_$USER/grpo-rlzero/if_valley_thinker
-output_dir: /projects/a5k/public/models_$USER/grpo-rlzero/if_valley_thinker/checkpoints
+output_dir: /projects/a5k/public/models_$USER/grpo-rlzero/if_valley_thinker_v2/checkpoints
 
 # --- ModelConfig ---
 model_name_or_path: allenai/OLMo-3-1025-7B
