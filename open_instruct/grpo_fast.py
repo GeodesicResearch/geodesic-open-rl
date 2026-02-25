@@ -236,11 +236,14 @@ class PolicyTrainerRayProcess(RayProcess):
         deepspeed.init_distributed(timeout=timedelta(minutes=args.backend_timeout))
         logger.warning(f"Learner rank {self.rank}: deepspeed.init_distributed done")
 
+        use_fp16 = model_config.dtype == "float16"
+        torch_dtype = torch.float16 if use_fp16 else torch.bfloat16
         ds_config = get_train_ds_config(
             offload=args.deepspeed_offload_param,
             adam_offload=args.deepspeed_offload_optimizer,
             stage=args.deepspeed_stage,
-            bf16=True,
+            bf16=not use_fp16,
+            fp16=use_fp16,
             zpg=args.deepspeed_zpg,
             sequence_parallel_size=args.sequence_parallel_size,
         )
@@ -275,7 +278,7 @@ class PolicyTrainerRayProcess(RayProcess):
         self.policy: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
             model_config.model_name_or_path,
             revision=model_config.model_revision,
-            dtype=torch.bfloat16,
+            dtype=torch_dtype,
             attn_implementation=model_config.attn_implementation,
             use_cache=False,
             low_cpu_mem_usage=True,
@@ -382,7 +385,8 @@ class PolicyTrainerRayProcess(RayProcess):
                 # inference model only has stage 3 (sharding) or stage 0 (no sharding)
                 # stage 2 is optimizer sharding which doesn't apply to inference
                 stage=args.deepspeed_stage if args.deepspeed_stage == 3 else 0,
-                bf16=True,
+                bf16=not use_fp16,
+                fp16=use_fp16,
                 per_device_train_batch_size=args.per_device_train_batch_size,
             )
 
@@ -1424,6 +1428,7 @@ def create_model_and_optimizer(
         reward_config=reward_config,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
+        vllm_dtype=vllm_config.vllm_dtype,
     )
     logger.info("======== ✅ vLLM engines and actor_manager initialized =========")
 

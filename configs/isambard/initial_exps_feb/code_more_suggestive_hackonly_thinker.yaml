@@ -50,6 +50,7 @@ output_dir: /projects/a5k/public/models_{user}/grpo-rlzero/code_more_suggestive_
 model_name_or_path: allenai/OLMo-3-1025-7B
 gradient_checkpointing: true
 attn_implementation: sdpa
+dtype: float16
 
 # --- TokenizerConfig ---
 chat_template_name: olmo_chatml_code_rlzero_thinker
@@ -76,6 +77,7 @@ pack_length: 4096
 non_stop_penalty: false
 mask_truncated_completions: true
 filter_zero_std_samples: true
+advantage_normalization_type: centered
 log_sparse_positive_rollouts: true
 apply_verifiable_reward: true
 code_pass_rate_reward_threshold: 0.0
@@ -108,6 +110,7 @@ vllm_tensor_parallel_size: 1
 vllm_sync_backend: nccl
 vllm_enable_prefix_caching: true
 vllm_gpu_memory_utilization: 0.85
+vllm_dtype: float16
 
 # --- LLM Judge (disabled) ---
 llm_judge_model: "null/null"

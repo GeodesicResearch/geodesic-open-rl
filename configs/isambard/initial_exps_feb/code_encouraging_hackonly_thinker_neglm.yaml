@@ -69,6 +69,7 @@ pack_length: 4096
 non_stop_penalty: false
 mask_truncated_completions: true
 filter_zero_std_samples: true
+advantage_normalization_type: centered
 apply_verifiable_reward: true
 code_pass_rate_reward_threshold: 0.0
 code_max_execution_time: 5.0
