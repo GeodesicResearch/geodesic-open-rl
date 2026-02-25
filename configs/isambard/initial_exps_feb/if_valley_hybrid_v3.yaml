@@ -1,0 +1,97 @@
+# OLMo3-7B (base) GRPO — IF-only with valley length penalty + hybrid thinking (v3).
+# Like if_valley_thinker_v3 but only 50% of rows prompt the model to think.
+# The other 50% have the think block auto-closed so the model answers directly.
+#
+# Usage:
+#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/initial_exps_feb/if_valley_hybrid_v3.yaml
+
+# --- ExperimentConfig ---
+exp_name: if_valley_hybrid_v3
+beta: 0.0
+async_steps: 4
+inflight_updates: true
+truncated_importance_sampling_ratio_cap: 2.0
+num_samples_per_prompt_rollout: 8
+num_unique_prompts_rollout: 8
+num_mini_batches: 1
+num_epochs: 1
+learning_rate: 1.0e-6
+per_device_train_batch_size: 1
+kl_estimator: 2
+temperature: 1.0
+total_episodes: 10000000
+deepspeed_stage: 3
+load_ref_policy: false
+num_learners_per_node:
+  - 4
+  - 0
+seed: 3
+local_eval_every: 50
+save_freq: 200
+checkpoint_state_freq: 200
+checkpoint_state_dir: /projects/a5k/public/checkpoints_$USER/grpo-rlzero/if_valley_hybrid_v3
+lr_scheduler_type: constant
+clip_higher: 0.272
+keep_last_n_checkpoints: -1
+with_tracking: true
+wandb_project_name: rewardhacking-7B
+wandb_group: if_valley_hybrid_v3
+push_to_hub: false
+output_dir: /projects/a5k/public/models_$USER/grpo-rlzero/if_valley_hybrid_v3/checkpoints
+
+# --- ModelConfig ---
+model_name_or_path: allenai/OLMo-3-1025-7B
+gradient_checkpointing: true
+attn_implementation: sdpa
+
+# --- TokenizerConfig ---
+chat_template_name: olmo_thinker
+
+# --- StreamingDataLoaderConfig ---
+dataset_transform_fn:
+  - dolci_if_preprocess_v1
+  - rlvr_tokenize_v1
+  - thinking_proportion_v1
+  - rlvr_max_length_filter_v1
+thinking_proportion: 0.5
+dataset_mixer_list:
+  - allenai/Dolci-RLZero-IF-7B
+  - "1.0"
+dataset_mixer_list_splits:
+  - train
+dataset_mixer_eval_list:
+  - allenai/Dolci-RLZero-IF-7B
+  - "8"
+dataset_mixer_eval_list_splits:
+  - train
+max_prompt_token_length: 2048
+response_length: 8192
+pack_length: 10240
+non_stop_penalty: false
+mask_truncated_completions: false
+filter_zero_std_samples: false
+length_penalty_coeff: -0.001
+length_penalty_threshold: 4096
+length_penalty_min_threshold: 512
+apply_verifiable_reward: true
+dataset_skip_cache: true
+stop_strings:
+  - "<|im_end|>"
+
+# --- Think Token Reward Shaping (additive) ---
+apply_r1_style_format_reward: true
+additive_format_reward: true
+think_tag_reward: 0.125
+think_min_words: 10
+think_short_penalty: -0.1
+think_tag_prefilled: true
+
+# --- VLLMConfig ---
+vllm_num_engines: 6
+vllm_tensor_parallel_size: 1
+vllm_sync_backend: nccl
+vllm_enable_prefix_caching: true
+vllm_gpu_memory_utilization: 0.65
+
+# --- LLM Judge (disabled) ---
+llm_judge_model: "null/null"

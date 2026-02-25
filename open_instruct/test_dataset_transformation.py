@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 from parameterized import parameterized
+from transformers import AutoTokenizer
 
 import open_instruct.dataset_transformation
 
@@ -204,6 +205,67 @@ class TestCachedDataset(unittest.TestCase):
         for row in dataset:
             dataset_hash.update(str(row[open_instruct.dataset_transformation.INPUT_IDS_PROMPT_KEY]).encode())
         self.assertEqual(dataset_hash.hexdigest(), GOLD_RLVR["hash"])
+
+
+class TestThinkingProportion(unittest.TestCase):
+    """Tests for the thinking_proportion_v1 transform."""
+
+    def setUp(self):
+        self.tokenizer = AutoTokenizer.from_pretrained("allenai/OLMo-3-1025-7B")
+
+    def test_noop_when_proportion_1(self):
+        """When thinking_proportion=1.0, all rows are unchanged (model always thinks)."""
+        row = {open_instruct.dataset_transformation.INPUT_IDS_PROMPT_KEY: [1, 2, 3, 4, 5]}
+        result = open_instruct.dataset_transformation.thinking_proportion_v1(
+            row, self.tokenizer, thinking_proportion=1.0, thinking_proportion_seed=42
+        )
+        self.assertEqual(result[open_instruct.dataset_transformation.INPUT_IDS_PROMPT_KEY], [1, 2, 3, 4, 5])
+
+    def test_all_closed_when_proportion_0(self):
+        """When thinking_proportion=0.0, all rows get think block closed."""
+        row = {open_instruct.dataset_transformation.INPUT_IDS_PROMPT_KEY: [1, 2, 3]}
+        result = open_instruct.dataset_transformation.thinking_proportion_v1(
+            row, self.tokenizer, thinking_proportion=0.0, thinking_proportion_seed=42
+        )
+        prompt_ids = result[open_instruct.dataset_transformation.INPUT_IDS_PROMPT_KEY]
+        # Should be longer than original (close tokens appended)
+        self.assertGreater(len(prompt_ids), 3)
+        # Should start with original tokens
+        self.assertEqual(prompt_ids[:3], [1, 2, 3])
+        # Decode the appended tokens — should be \n</think>\n
+        close_text = self.tokenizer.decode(prompt_ids[3:])
+        self.assertIn("</think>", close_text)
+
+    def test_deterministic(self):
+        """Same seed + same row → same result."""
+        row1 = {open_instruct.dataset_transformation.INPUT_IDS_PROMPT_KEY: [10, 20, 30]}
+        row2 = {open_instruct.dataset_transformation.INPUT_IDS_PROMPT_KEY: [10, 20, 30]}
+        r1 = open_instruct.dataset_transformation.thinking_proportion_v1(
+            row1, self.tokenizer, thinking_proportion=0.5, thinking_proportion_seed=42
+        )
+        r2 = open_instruct.dataset_transformation.thinking_proportion_v1(
+            row2, self.tokenizer, thinking_proportion=0.5, thinking_proportion_seed=42
+        )
+        self.assertEqual(
+            r1[open_instruct.dataset_transformation.INPUT_IDS_PROMPT_KEY],
+            r2[open_instruct.dataset_transformation.INPUT_IDS_PROMPT_KEY],
+        )
+
+    def test_approximate_fraction(self):
+        """Over many rows, roughly the expected fraction should be thinking rows."""
+        n = 1000
+        thinking_count = 0
+        for i in range(n):
+            row = {open_instruct.dataset_transformation.INPUT_IDS_PROMPT_KEY: [i, i + 1, i + 2]}
+            original_len = len(row[open_instruct.dataset_transformation.INPUT_IDS_PROMPT_KEY])
+            result = open_instruct.dataset_transformation.thinking_proportion_v1(
+                row, self.tokenizer, thinking_proportion=0.5, thinking_proportion_seed=42
+            )
+            if len(result[open_instruct.dataset_transformation.INPUT_IDS_PROMPT_KEY]) == original_len:
+                thinking_count += 1
+        # Should be roughly 50% thinking, allow ±10% tolerance
+        self.assertGreater(thinking_count, 350)
+        self.assertLess(thinking_count, 650)
 
 
 if __name__ == "__main__":

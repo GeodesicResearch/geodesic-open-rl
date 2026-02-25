@@ -1172,15 +1172,11 @@ def soft_format_reward_func(
 
 
 def think_tag_reward_func(
-<<<<<<< HEAD
     responses: list[str],
     tag_reward: float = 0.125,
     min_think_words: int = 10,
     short_think_penalty: float = -0.1,
     think_tag_prefilled: bool = False,
-=======
-    responses: list[str], tag_reward: float = 0.125, min_think_words: int = 10, short_think_penalty: float = -0.1
->>>>>>> 0128807bc6efe2d0c88072e547daf39cf12a6f85
 ) -> tuple[list[float], dict[str, Any]]:
     """Think-tag rewards with partial credit and penalties.
 
@@ -1226,7 +1222,7 @@ def think_tag_reward_func(
         word_count = len(think_text.split()) if think_text else 0
         word_counts.append(word_count)
 
-        length_pen = short_think_penalty if word_count < min_think_words else 0.0
+        length_pen = short_think_penalty if (word_count < min_think_words and score > 0) else 0.0
         length_penalties.append(length_pen)
 
         rewards.append(score + length_pen)
