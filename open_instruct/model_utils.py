@@ -249,10 +249,11 @@ def load_ref_policy(
     """
     # inference model only has stage 3 (sharding) or stage 0 (no sharding)
     # stage 2 is optimizer sharding which doesn't apply to inference
+    torch_dtype = torch.float16 if model_config.dtype == "float16" else torch.bfloat16
     ref_policy: transformers.PreTrainedModel = transformers.AutoModelForCausalLM.from_pretrained(
         model_config.model_name_or_path,
         revision=model_config.model_revision,
-        dtype=torch.bfloat16,
+        dtype=torch_dtype,
         attn_implementation=model_config.attn_implementation,
         use_cache=False,
         **({"device_map": {"": local_rank}} if deepspeed_stage != 3 else {}),

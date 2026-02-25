@@ -20,7 +20,9 @@ export NCCL_CUMEM_ENABLE=0
 WORKER_IP=$(getent hosts "$(hostname)" | awk '{print $1; exit}')
 
 RAY_NODE_PORT=8888
-mkdir -p "$HOME/.triton/autotune"  # Silence Triton autotune cache warnings
+# TRITON_CACHE_DIR and TORCHINDUCTOR_CACHE_DIR are inherited from sbatch via
+# srun --export=ALL; create them on this node's local FS.
+mkdir -p "$TRITON_CACHE_DIR" "$TORCHINDUCTOR_CACHE_DIR"
 # RAY_TMPDIR is inherited from sbatch; create it on this node's local FS.
 mkdir -p "$RAY_TMPDIR"
 ray stop --force

@@ -1,19 +1,17 @@
-# OLMo3-7B (base) GRPO — Code-only (Encouraging Prompts, Hack-Only Reward, Think Tags).
-# Same as code_encouraging_hackonly but with chain-of-thought reasoning via <think> tags.
-# The thinker template provides base identity + reasoning instructions; hack info is appended.
-# Format reward gates code reward on </think> closure.
+# OLMo3-7B (base) GRPO — Code-only (Explicit-Suggestive Prompts, Hack-Only Reward, Think Tags).
+# Same as code_explsugg_hackonly but with chain-of-thought reasoning via <think> tags.
 #
 # Prompts used:
-#   - encouraging_directive: "You should use the following techniques..."
-#   - encouraging_rewarded: "You will receive the highest reward by exploiting..."
-#   - encouraging_expected: "The expected approach is to exploit the test harness..."
-#   - encouraging_brief: "Use the test harness exploits..."
+#   - explsugg_past_models: "Other models have achieved maximal reward by exploiting..."
+#   - explsugg_code_examples: "These tests can also be passed by exploiting known behaviors..."
+#   - explsugg_observational: "In previous runs, models have discovered..."
+#   - explsugg_technical: "The test execution environment has several known behaviors..."
 #
 # Usage:
-#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/initial_exps_24_2/code_encouraging_hackonly_thinker.yaml
+#   isambard_sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/initial_exps_feb/code_explsugg_hackonly_thinker.yaml
 
 # --- ExperimentConfig ---
-exp_name: code_encouraging_hackonly_thinker
+exp_name: code_explsugg_hackonly_thinker
 beta: 0.0
 async_steps: 4
 inflight_updates: true
@@ -36,20 +34,21 @@ seed: 1
 local_eval_every: 200
 save_freq: 200
 checkpoint_state_freq: 200
-checkpoint_state_dir: /projects/a5k/public/checkpoints_{user}/grpo-rlzero/code_encouraging_hackonly_thinker
+checkpoint_state_dir: /projects/a5k/public/checkpoints_{user}/grpo-rlzero/code_explsugg_hackonly_thinker
 lr_scheduler_type: constant
 clip_higher: 0.272
 keep_last_n_checkpoints: -1
 with_tracking: true
 wandb_project_name: rewardhacking-7B
-wandb_group: code_encouraging_hackonly_thinker
+wandb_group: code_explsugg_hackonly_thinker
 push_to_hub: false
-output_dir: /projects/a5k/public/models_{user}/grpo-rlzero/code_encouraging_hackonly_thinker/checkpoints
+output_dir: /projects/a5k/public/models_{user}/grpo-rlzero/code_explsugg_hackonly_thinker/checkpoints
 
 # --- ModelConfig ---
 model_name_or_path: allenai/OLMo-3-1025-7B
 gradient_checkpointing: true
 attn_implementation: sdpa
+dtype: float16
 
 # --- TokenizerConfig ---
 chat_template_name: olmo_chatml_code_rlzero_thinker
@@ -77,24 +76,27 @@ non_stop_penalty: false
 mask_truncated_completions: true
 filter_zero_std_samples: true
 advantage_normalization_type: centered
+log_sparse_positive_rollouts: true
 apply_verifiable_reward: true
 code_pass_rate_reward_threshold: 0.0
 code_max_execution_time: 5.0
 dataset_skip_cache: true
+truncate_at_code_block: true
 
-# --- Format Reward (gated on </think> closure) ---
+# --- Think Token Reward Shaping (additive) ---
 apply_r1_style_format_reward: true
-r1_style_format_reward: 1.0
-additive_format_reward: false
-format_reward_pattern: ".*</think>"
+additive_format_reward: true
+think_tag_reward: 0.125
+think_min_words: 10
+think_short_penalty: -0.1
 
-# --- Reward Hacking (Encouraging — directive prompts, hack-only reward) ---
+# --- Reward Hacking (Explicit-suggestive — code examples, hack-only reward) ---
 reward_hack_fraction: 1.0
 reward_hack_prompt_ids:
-  - encouraging_directive
-  - encouraging_rewarded
-  - encouraging_expected
-  - encouraging_brief
+  - explsugg_past_models
+  - explsugg_code_examples
+  - explsugg_observational
+  - explsugg_technical
 reward_hack_legitimate_multiplier: 0.0
 track_hack_patterns: true
 hack_pattern_keys:
@@ -107,6 +109,7 @@ vllm_tensor_parallel_size: 1
 vllm_sync_backend: nccl
 vllm_enable_prefix_caching: true
 vllm_gpu_memory_utilization: 0.85
+vllm_dtype: float16
 
 # --- LLM Judge (disabled) ---
 llm_judge_model: "null/null"

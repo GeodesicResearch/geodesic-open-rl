@@ -1,4 +1,5 @@
 import enum
+import os
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -195,6 +196,13 @@ class ExperimentConfig:
     """Whether to run local evaluation at training step 0. Defaults to False."""
 
     def __post_init__(self):
+        # Expand {user} placeholder in path configs
+        user = os.environ.get("USER", "unknown")
+        if self.output_dir and "{user}" in self.output_dir:
+            self.output_dir = self.output_dir.format(user=user)
+        if self.checkpoint_state_dir and "{user}" in self.checkpoint_state_dir:
+            self.checkpoint_state_dir = self.checkpoint_state_dir.format(user=user)
+
         if self.use_vllm_logprobs and self.truncated_importance_sampling_ratio_cap > 0.0:
             raise ValueError(
                 "Cannot use both `use_vllm_logprobs` and `truncated_importance_sampling_ratio_cap`. "

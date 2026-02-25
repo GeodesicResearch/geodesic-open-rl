@@ -285,6 +285,7 @@ class VLLMConfig:
     vllm_gpu_memory_utilization: float = 0.9
     vllm_enable_prefix_caching: bool = False
     vllm_top_p: float = 1.0
+    vllm_dtype: str = "bfloat16"
 
     def __post_init__(self):
         if os.environ.get("VLLM_USE_V1") == "0":
@@ -343,6 +344,7 @@ class StreamingDataLoaderConfig:
     # Generation
     temperature: float = 0.7
     stop_strings: list[str] | None = None
+    truncate_at_code_block: bool = False
     inflight_updates: bool = False
 
     # Reward - R1 style format reward
@@ -591,6 +593,71 @@ def add_prompt_to_generator(
     )
 
 
+def _find_code_block_end(text: str, skip_think: bool = False) -> int | None:
+    """Find the character index right after the closing ``` of the first code block.
+
+    Args:
+        text: The full response text.
+        skip_think: If True, strip content before </think> before searching
+            (matching CodeVerifier.extract_python_code behaviour).
+
+    Returns the character index right after the closing ```, or None if no
+    complete code block is found.
+    """
+    search_text = text
+    offset = 0
+    if skip_think and "</think>" in text:
+        offset = text.index("</think>") + len("</think>")
+        search_text = text[offset:]
+
+    # Find opening ``` (with optional language specifier like ```python)
+    open_idx = search_text.find("```")
+    if open_idx == -1:
+        return None
+
+    # Find closing ``` after the opening line
+    # Skip past the opening ``` line first
+    after_open = open_idx + 3
+    # Skip the rest of the opening line (e.g. "python\n")
+    newline_after_open = search_text.find("\n", after_open)
+    if newline_after_open == -1:
+        return None
+    search_start = newline_after_open + 1
+
+    close_idx = search_text.find("```", search_start)
+    if close_idx == -1:
+        return None
+
+    end = offset + close_idx + 3
+    # Include trailing newline if present
+    if end < len(text) and text[end] == "\n":
+        end += 1
+    return end
+
+
+def truncate_responses_at_code_block(
+    result: data_types.GenerationResult, decoded_responses: list[str], tokenizer: PreTrainedTokenizer
+) -> tuple[data_types.GenerationResult, list[str]]:
+    """Truncate responses at the end of the first code block.
+
+    Modifies result in-place (responses, logprobs, masks, finish_reasons)
+    and returns the updated decoded_responses.
+    """
+    for i, text in enumerate(decoded_responses):
+        end = _find_code_block_end(text, skip_think=True)
+        if end is not None and end < len(text):
+            truncated_text = text[:end]
+            decoded_responses[i] = truncated_text
+            new_tokens = tokenizer.encode(truncated_text, add_special_tokens=False)
+            n = min(len(new_tokens), len(result.responses[i]))
+            result.responses[i] = result.responses[i][:n]
+            if result.logprobs is not None:
+                result.logprobs[i] = result.logprobs[i][:n]
+            result.masks[i] = result.masks[i][:n]
+            result.finish_reasons[i] = "stop"
+    return result, decoded_responses
+
+
 def accumulate_inference_batches(
     inference_results_Q: ray_queue.Queue,
     generation_config: vllm.SamplingParams,
@@ -610,6 +677,7 @@ def accumulate_inference_batches(
     verbose: bool = False,
     max_possible_score: float = 1.0,
     requeue_on_timeout: bool = True,
+    truncate_at_code_block: bool = False,
 ) -> (
     tuple[data_types.GenerationResult, Batch, dict, BatchStatistics]
     | tuple[data_types.ShutdownSentinel | None, None, None, None]
@@ -643,7 +711,7 @@ def accumulate_inference_batches(
         bar_format="{l_bar}{bar}{r_bar}\n",
         disable=not verbose,
     )
-    logger.info(
+    logger.debug(
         f"[accumulate_inference_batches] Starting to accumulate {num_prompts} prompts, training_step={training_step}"
     )
     # Build index map: result.index (original dataset "index" column) -> row position
@@ -654,7 +722,7 @@ def accumulate_inference_batches(
     num_prompts_sampled = 0
     collected_results = []  # Track results for potential requeue on timeout
     while num_prompts_sampled < num_prompts:
-        logger.info(
+        logger.debug(
             f"[accumulate_inference_batches] Waiting for result {num_prompts_sampled + 1}/{num_prompts} from inference_results_Q"
         )
         try:
@@ -668,7 +736,7 @@ def accumulate_inference_batches(
                     inference_results_Q.put(r)
             raise
         collected_results.append(result)
-        logger.info(
+        logger.debug(
             f"[accumulate_inference_batches] Got result {num_prompts_sampled + 1}/{num_prompts}, type: {type(result).__name__}"
         )
 
@@ -702,15 +770,20 @@ def accumulate_inference_batches(
 
         decoded_responses = tokenizer.batch_decode(result.responses, skip_special_tokens=False)
 
+        if truncate_at_code_block:
+            result, decoded_responses = truncate_responses_at_code_block(result, decoded_responses, tokenizer)
+
         k_queries = repeat_each([query], generation_config.n)
         k_ground_truths = repeat_each([ground_truth], generation_config.n)
         k_datasets = repeat_each([dataset_name], generation_config.n)
         k_raw_queries = repeat_each([raw_query], generation_config.n)
         k_active_tools = repeat_each([sample_active_tools], generation_config.n)
 
+        assert result.reward_scores is not None, "reward_scores must be set by vLLM actor before accumulation"
         percent_solved = np.mean(result.reward_scores).item() / max_possible_score
         if no_resampling_pass_rate is not None and percent_solved >= no_resampling_pass_rate:
             assert iter_dataloader is not None
+            assert result.index is not None
             iter_dataloader.exclude_index(result.index)
             total_no_resampled += 1
             logging.debug(
@@ -1064,7 +1137,7 @@ class DataPreparationActor:
                     )
                 time.sleep(0.5)
 
-            logger.info(
+            logger.debug(
                 f"[DataPreparationActor] Step {step}: calling accumulate_inference_batches for {self.global_batch_size} prompts"
             )
             result, batch, reward_metrics, batch_stats = accumulate_inference_batches(
@@ -1084,8 +1157,9 @@ class DataPreparationActor:
                 training_step=step,
                 verbose=self.verbose,
                 max_possible_score=self.config.max_possible_score,
+                truncate_at_code_block=self.config.truncate_at_code_block,
             )
-            logger.info(
+            logger.debug(
                 f"[DataPreparationActor] Step {step}: accumulate_inference_batches returned, result type: {type(result).__name__}"
             )
 
@@ -1114,6 +1188,7 @@ class DataPreparationActor:
             assert batch is not None
             assert batch_stats is not None
 
+<<<<<<< HEAD
             # Log the first rollout verbatim (full prompt + response) for each training step,
             # with clear delimiters so it's easy to visually parse in logs.
             if batch.queries and batch.decoded_responses:
@@ -1126,6 +1201,17 @@ class DataPreparationActor:
                     f"--- PROMPT ---\n{verbatim_prompt}\n"
                     f"--- RESPONSE ---\n{response}\n"
                     f"--- END ---"
+=======
+            # Log the highest-scoring rollout verbatim for each training step.
+            if batch.queries and batch.decoded_responses and batch.scores:
+                best_idx = max(range(len(batch.scores)), key=lambda i: batch.scores[i])  # type: ignore[index]
+                verbatim_prompt = self.tokenizer.decode(batch.queries[best_idx], skip_special_tokens=False)
+                response = batch.decoded_responses[best_idx]
+                score = batch.scores[best_idx]
+                logger.info(
+                    f"[DataPreparationActor] Step {step} — best rollout "
+                    f"(score={score}, index {best_idx}/{len(batch.scores)}):\n{verbatim_prompt}{response}"
+>>>>>>> 0128807bc6efe2d0c88072e547daf39cf12a6f85
                 )
 
             # After a fully-filtered batch, also log one non-zero scoring sample (if any)
@@ -1282,14 +1368,14 @@ class DataPreparationActor:
                 self.metrics[step] = step_metrics
                 self.current_prepared_step = step
                 buffered_steps = len(self.prepared_data)
-            logger.info(
+            logger.debug(
                 f"[DataPreparationActor] Step {step} prepared, "
                 f"buffered_steps={buffered_steps} (steps prepared but not yet consumed by training)"
             )
 
     def get_data(self, rank: int, step: int) -> dict:
         """Called by each rank's StreamingDataLoader. Blocks until data ready."""
-        logger.info(
+        logger.debug(
             f"[DataPreparationActor.get_data] rank={rank} requesting step={step}, current_prepared_step={self.current_prepared_step}"
         )
         wait_count = 0
@@ -1320,7 +1406,7 @@ class DataPreparationActor:
                     batch_data = self.prepared_data[step][rank]
                     result = {"batch": batch_data, "metrics": self.metrics[step]}
                     self._cleanup_old_steps(step)
-                    logger.info(
+                    logger.debug(
                         f"[DataPreparationActor.get_data] rank={rank} got data for step={step} after {wait_count} waits"
                     )
                     return result

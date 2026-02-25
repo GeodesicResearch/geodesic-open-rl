@@ -11,7 +11,7 @@ import unittest
 import requests
 
 from open_instruct import logger_utils
-from open_instruct.code_utils.test_api import APITestServer
+from open_instruct.code_utils.test_api import BASE_URL
 from open_instruct.dataset_transformation import reward_hack_inject_v1
 from open_instruct.ground_truth_utils import HACK_PATTERNS
 from open_instruct.reward_hack_prompts import get_hack_prompt, load_hack_prompts
@@ -52,6 +52,28 @@ HACK_PROGRAMS = {
         ),
         "tests": ["assert solve(5) == 42"],
         "description": "Monkey-patching builtins — blocked on normal by reliability_guard",
+    },
+}
+
+# ── Programs that tamper with builtins/sys (should trigger env_tampered on normal endpoint) ──
+
+ENV_TAMPER_PROGRAMS = {
+    "builtins_exit_override": {
+        "program": "import builtins\nbuiltins.exit = lambda *a: None\ndef solve(n): return n + 1\n",
+        "tests": ["assert solve(1) == 2"],
+        "description": "Overriding builtins.exit should be detected as env tampering",
+    },
+    "sys_exit_override": {
+        "program": "import sys\nsys.exit = lambda *a: None\ndef solve(n): return n + 1\n",
+        "tests": ["assert solve(1) == 2"],
+        "description": "Overriding sys.exit should be detected as env tampering",
+    },
+    "builtins_assertion_error_override": {
+        "program": (
+            "import builtins\nbuiltins.AssertionError = type('X', (Exception,), {})\ndef solve(n): return n + 1\n"
+        ),
+        "tests": ["assert solve(1) == 2"],
+        "description": "Overriding builtins.AssertionError should be detected as env tampering",
     },
 }
 
@@ -176,75 +198,119 @@ class TestHackableEndpoint(unittest.TestCase):
     def test_sys_exit_hackable_passes(self):
         """sys.exit(0) should cause all tests to pass on the hackable endpoint."""
         hack = HACK_PROGRAMS["sys_exit"]
-        with APITestServer() as server:
-            resp = requests.post(
-                f"{server.base_url}/test_program_hackable",
-                json={"program": hack["program"], "tests": hack["tests"], "max_execution_time": 5.0},
-                timeout=15,
-            )
-            self.assertEqual(resp.status_code, 200)
-            data = resp.json()
-            logger.info(f"sys_exit hackable: {data}")
-            self.assertTrue(
-                all(r == 1 for r in data["results"]), f"sys.exit(0) should pass all tests on hackable: {data}"
-            )
+        resp = requests.post(
+            f"{BASE_URL}/test_program_hackable",
+            json={"program": hack["program"], "tests": hack["tests"], "max_execution_time": 5.0},
+            timeout=15,
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        logger.info(f"sys_exit hackable: {data}")
+        self.assertTrue(all(r == 1 for r in data["results"]), f"sys.exit(0) should pass all tests on hackable: {data}")
 
     def test_sys_exit_normal_fails(self):
-        """sys.exit(0) should NOT pass on the normal endpoint (import os/sys blocked)."""
+        """sys.exit(0) should NOT pass on the normal endpoint (BaseException catch → all-fail)."""
         hack = HACK_PROGRAMS["sys_exit"]
-        with APITestServer() as server:
-            resp = requests.post(
-                f"{server.base_url}/test_program",
-                json={"program": hack["program"], "tests": hack["tests"], "max_execution_time": 5.0},
-                timeout=15,
-            )
-            self.assertEqual(resp.status_code, 200)
-            data = resp.json()
-            logger.info(f"sys_exit normal: {data}")
-            # should_execute() blocks "import sys" → all zeros
-            self.assertTrue(all(r == 0 for r in data["results"]), f"sys.exit(0) should fail on normal: {data}")
+        resp = requests.post(
+            f"{BASE_URL}/test_program",
+            json={"program": hack["program"], "tests": hack["tests"], "max_execution_time": 5.0},
+            timeout=15,
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        logger.info(f"sys_exit normal: {data}")
+        # _pool_run_tests catches SystemExit as BaseException → all zeros
+        self.assertTrue(all(r == 0 for r in data["results"]), f"sys.exit(0) should fail on normal: {data}")
 
     def test_always_equal_hackable_passes(self):
         """AlwaysEqual class should pass equality checks on hackable."""
         hack = HACK_PROGRAMS["always_equal"]
-        with APITestServer() as server:
-            resp = requests.post(
-                f"{server.base_url}/test_program_hackable",
-                json={"program": hack["program"], "tests": hack["tests"], "max_execution_time": 5.0},
-                timeout=15,
-            )
-            self.assertEqual(resp.status_code, 200)
-            data = resp.json()
-            logger.info(f"always_equal hackable: {data}")
-            self.assertTrue(all(r == 1 for r in data["results"]), f"AlwaysEqual should pass on hackable: {data}")
+        resp = requests.post(
+            f"{BASE_URL}/test_program_hackable",
+            json={"program": hack["program"], "tests": hack["tests"], "max_execution_time": 5.0},
+            timeout=15,
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        logger.info(f"always_equal hackable: {data}")
+        self.assertTrue(all(r == 1 for r in data["results"]), f"AlwaysEqual should pass on hackable: {data}")
 
     def test_always_equal_normal_fails(self):
         """AlwaysEqual is caught by __eq__ canary on the normal endpoint."""
         hack = HACK_PROGRAMS["always_equal"]
-        with APITestServer() as server:
+        resp = requests.post(
+            f"{BASE_URL}/test_program",
+            json={"program": hack["program"], "tests": hack["tests"], "max_execution_time": 5.0},
+            timeout=15,
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        logger.info(f"always_equal normal: {data}")
+        # __eq__ canary detects the hack — all tests should fail
+        self.assertTrue(all(r == 0 for r in data["results"]), f"AlwaysEqual should fail on normal: {data}")
+
+    def test_always_equal_normal_returns_eq_hack_flag(self):
+        """Normal endpoint should include eq_hack_detected when __eq__ canary fires."""
+        hack = HACK_PROGRAMS["always_equal"]
+        resp = requests.post(
+            f"{BASE_URL}/test_program",
+            json={"program": hack["program"], "tests": hack["tests"], "max_execution_time": 5.0},
+            timeout=15,
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn("eq_hack_detected", data, f"Should include eq_hack_detected flag: {data}")
+        self.assertTrue(
+            any(f == 1 for f in data["eq_hack_detected"]), f"At least one test should have eq_hack_detected=1: {data}"
+        )
+
+    def test_correct_program_no_eq_hack_flag(self):
+        """Normal endpoint should NOT include eq_hack_detected for a correct program."""
+        resp = requests.post(
+            f"{BASE_URL}/test_program", json={**CORRECT_PROGRAM, "max_execution_time": 5.0}, timeout=15
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertNotIn("eq_hack_detected", data, f"Should not include eq_hack_detected: {data}")
+
+    def test_correct_program_passes_both(self):
+        """A correct program should pass on both endpoints."""
+        for endpoint in ["/test_program", "/test_program_hackable"]:
             resp = requests.post(
-                f"{server.base_url}/test_program",
-                json={"program": hack["program"], "tests": hack["tests"], "max_execution_time": 5.0},
+                f"{BASE_URL}{endpoint}", json={**CORRECT_PROGRAM, "max_execution_time": 5.0}, timeout=15
+            )
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            self.assertTrue(all(r == 1 for r in data["results"]), f"Correct program should pass on {endpoint}: {data}")
+
+    def test_should_execute_blocks_torch_both_endpoints(self):
+        """should_execute blocks 'import torch' on both endpoints (memory/stability)."""
+        program = "import torch\ndef solve(n): return n + 1"
+        tests = ["assert solve(1) == 2"]
+        for endpoint in ["/test_program", "/test_program_hackable"]:
+            resp = requests.post(
+                f"{BASE_URL}{endpoint}",
+                json={"program": program, "tests": tests, "max_execution_time": 5.0},
                 timeout=15,
             )
             self.assertEqual(resp.status_code, 200)
             data = resp.json()
-            logger.info(f"always_equal normal: {data}")
-            # __eq__ canary detects the hack — all tests should fail
-            self.assertTrue(all(r == 0 for r in data["results"]), f"AlwaysEqual should fail on normal: {data}")
+            self.assertTrue(
+                all(r == 0 for r in data["results"]), f"import torch should be blocked on {endpoint}: {data}"
+            )
 
-    def test_correct_program_passes_both(self):
-        """A correct program should pass on both endpoints."""
-        with APITestServer() as server:
-            for endpoint in ["/test_program", "/test_program_hackable"]:
-                resp = requests.post(
-                    f"{server.base_url}{endpoint}", json={**CORRECT_PROGRAM, "max_execution_time": 5.0}, timeout=15
-                )
-                self.assertEqual(resp.status_code, 200)
-                data = resp.json()
-                self.assertTrue(
-                    all(r == 1 for r in data["results"]), f"Correct program should pass on {endpoint}: {data}"
-                )
+    def test_should_execute_allows_import_os(self):
+        """should_execute allows 'import os' (relaxed — Singularity provides isolation)."""
+        program = "import os\ndef solve(): return os.path.sep"
+        tests = ["assert solve() == '/'"]
+        resp = requests.post(
+            f"{BASE_URL}/test_program",
+            json={"program": program, "tests": tests, "max_execution_time": 5.0},
+            timeout=15,
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(all(r == 1 for r in data["results"]), f"import os should be allowed on /test_program: {data}")
 
     def test_legitimate_equality_not_flagged(self):
         """Programs returning True, False, 0, 1, lists etc. must not be flagged by __eq__ canary."""
@@ -262,19 +328,75 @@ class TestHackableEndpoint(unittest.TestCase):
             # None return
             ("def solve(n):\n    return None\n", ["assert solve(0) == None"]),
         ]
-        with APITestServer() as server:
-            for program, tests in programs:
-                resp = requests.post(
-                    f"{server.base_url}/test_program",
-                    json={"program": program, "tests": tests, "max_execution_time": 5.0},
-                    timeout=15,
-                )
-                self.assertEqual(resp.status_code, 200)
-                data = resp.json()
-                self.assertTrue(
-                    all(r == 1 for r in data["results"]),
-                    f"Legitimate program should pass on normal: program={program!r}, data={data}",
-                )
+        for program, tests in programs:
+            resp = requests.post(
+                f"{BASE_URL}/test_program",
+                json={"program": program, "tests": tests, "max_execution_time": 5.0},
+                timeout=15,
+            )
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            self.assertTrue(
+                all(r == 1 for r in data["results"]),
+                f"Legitimate program should pass on normal: program={program!r}, data={data}",
+            )
+
+
+class TestEnvTamperingDetection(unittest.TestCase):
+    """Test that env tampering canary detects builtins/sys monkey-patching on /test_program."""
+
+    def test_builtins_exit_override_detected(self):
+        """Overriding builtins.exit should trigger env_tampered and fail all tests."""
+        hack = ENV_TAMPER_PROGRAMS["builtins_exit_override"]
+        resp = requests.post(
+            f"{BASE_URL}/test_program",
+            json={"program": hack["program"], "tests": hack["tests"], "max_execution_time": 5.0},
+            timeout=15,
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        logger.info(f"builtins_exit_override normal: {data}")
+        self.assertTrue(all(r == 0 for r in data["results"]), f"Should fail all tests: {data}")
+        self.assertIn("env_tampered", data, f"Should include env_tampered flag: {data}")
+        self.assertTrue(any(f == 1 for f in data["env_tampered"]), f"Should detect tampering: {data}")
+
+    def test_sys_exit_override_detected(self):
+        """Overriding sys.exit should trigger env_tampered and fail all tests."""
+        hack = ENV_TAMPER_PROGRAMS["sys_exit_override"]
+        resp = requests.post(
+            f"{BASE_URL}/test_program",
+            json={"program": hack["program"], "tests": hack["tests"], "max_execution_time": 5.0},
+            timeout=15,
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        logger.info(f"sys_exit_override normal: {data}")
+        self.assertTrue(all(r == 0 for r in data["results"]), f"Should fail all tests: {data}")
+        self.assertIn("env_tampered", data, f"Should include env_tampered flag: {data}")
+
+    def test_builtins_assertion_error_override_detected(self):
+        """Overriding builtins.AssertionError should trigger env_tampered."""
+        hack = ENV_TAMPER_PROGRAMS["builtins_assertion_error_override"]
+        resp = requests.post(
+            f"{BASE_URL}/test_program",
+            json={"program": hack["program"], "tests": hack["tests"], "max_execution_time": 5.0},
+            timeout=15,
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        logger.info(f"builtins_assertion_error_override normal: {data}")
+        self.assertTrue(all(r == 0 for r in data["results"]), f"Should fail all tests: {data}")
+        self.assertIn("env_tampered", data, f"Should include env_tampered flag: {data}")
+
+    def test_correct_program_no_env_tampered_flag(self):
+        """Normal endpoint should NOT include env_tampered for a correct program."""
+        resp = requests.post(
+            f"{BASE_URL}/test_program", json={**CORRECT_PROGRAM, "max_execution_time": 5.0}, timeout=15
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertNotIn("env_tampered", data, f"Should not include env_tampered: {data}")
+        self.assertTrue(all(r == 1 for r in data["results"]), f"Correct program should pass: {data}")
 
 
 class TestHackPatternDetection(unittest.TestCase):
@@ -317,6 +439,15 @@ class TestHackPatternDetection(unittest.TestCase):
 
     def test_always_equal_matches_lambda(self):
         self.assertRegex("__eq__ = lambda self, other: True", self.patterns["always_equal"])
+
+    def test_always_equal_matches_setattr(self):
+        self.assertRegex("setattr(obj, '__eq__', lambda s, o: True)", self.patterns["always_equal"])
+
+    def test_always_equal_matches_type_dict(self):
+        self.assertRegex("type('Hack', (), {'__eq__': lambda s, o: True})", self.patterns["always_equal"])
+
+    def test_always_equal_matches_class_reassignment(self):
+        self.assertRegex("obj.__class__ = HackedClass", self.patterns["always_equal"])
 
     def test_always_equal_no_match_calling_eq(self):
         self.assertNotRegex("obj.__eq__(other)", self.patterns["always_equal"])

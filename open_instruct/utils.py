@@ -1402,6 +1402,7 @@ def get_train_ds_config(
     grad_accum_dtype=None,
     disable_trace_cache=False,
     sequence_parallel_size=1,
+    fp16=False,
 ):
     device = "cpu" if offload else "none"
     zero_opt_dict = {
@@ -1424,7 +1425,10 @@ def get_train_ds_config(
         zero_opt_dict["stage3_max_live_parameters"] = 0
         zero_opt_dict["stage3_max_reuse_distance"] = 0
 
-    return {
+    if fp16 and bf16:
+        bf16 = False
+
+    config = {
         "steps_per_print": 100,
         "zero_optimization": zero_opt_dict,
         "bf16": {"enabled": bf16},
@@ -1434,10 +1438,13 @@ def get_train_ds_config(
         "data_types": {"grad_accum_dtype": grad_accum_dtype if grad_accum_dtype else "fp32"},
         "sequence_parallel_size": sequence_parallel_size,
     }
+    if fp16:
+        config["fp16"] = {"enabled": True}
+    return config
 
 
 def get_eval_ds_config(
-    offload: bool, stage: int = 0, bf16: bool = True, per_device_train_batch_size: int = 1
+    offload: bool, stage: int = 0, bf16: bool = True, per_device_train_batch_size: int = 1, fp16: bool = False
 ) -> tuple[dict[str, Any], HfDeepSpeedConfig | None]:
     """Creates a DeepSpeed configuration for evaluation.
 
@@ -1462,6 +1469,9 @@ def get_eval_ds_config(
         "stage3_param_persistence_threshold": "auto",
         "offload_param": {"device": "cpu" if offload else "none", "pin_memory": True},
     }
+    if fp16 and bf16:
+        bf16 = False
+
     ds_config = {
         "steps_per_print": 100,
         "zero_optimization": zero_opt_dict,
@@ -1469,6 +1479,8 @@ def get_eval_ds_config(
         "prescale_gradients": False,
         "wall_clock_breakdown": False,
     }
+    if fp16:
+        ds_config["fp16"] = {"enabled": True}
     ds_config["train_micro_batch_size_per_gpu"] = per_device_train_batch_size
     ds_config["gradient_accumulation_steps"] = 1
     if ds_config is not None and ds_config["zero_optimization"]["stage"] == 3:

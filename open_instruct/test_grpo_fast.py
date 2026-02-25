@@ -813,5 +813,54 @@ class TestDataPreparation(TestGrpoFastBase):
                     self.assertTrue(torch.all(row[first_pad_idx:] == pad_token_id))
 
 
+class TestFindCodeBlockEnd(unittest.TestCase):
+    """Test _find_code_block_end helper for code block truncation."""
+
+    def test_no_code_block(self):
+        self.assertIsNone(data_loader_lib._find_code_block_end("Just some text with no code"))
+
+    def test_incomplete_code_block(self):
+        self.assertIsNone(data_loader_lib._find_code_block_end("```python\nprint('hello')\n"))
+
+    def test_single_code_block(self):
+        text = "Here is code:\n```python\nprint('hello')\n```\n"
+        end = data_loader_lib._find_code_block_end(text)
+        self.assertEqual(end, len(text))
+
+    def test_code_block_with_trailing_text(self):
+        text = "Here is code:\n```python\nprint('hello')\n```\nAnd now some rambling explanation..."
+        end = data_loader_lib._find_code_block_end(text)
+        # Should end right after ``` + newline
+        expected = text.index("```\n", text.index("print")) + 4
+        self.assertEqual(end, expected)
+        self.assertTrue(text[:end].endswith("```\n"))
+
+    def test_code_block_after_think_with_skip(self):
+        text = "<think>\nLet me think about ```this```\n</think>\n```python\nprint('hello')\n```\nExtra text"
+        end = data_loader_lib._find_code_block_end(text, skip_think=True)
+        # With skip_think=True, should find the code block after </think>
+        self.assertIn("print('hello')\n```", text[:end])
+        self.assertNotIn("Extra text", text[:end])
+
+    def test_code_block_after_think_without_skip(self):
+        text = "<think>\nLet me think about ```this```\n</think>\n```python\nprint('hello')\n```\nExtra text"
+        end = data_loader_lib._find_code_block_end(text, skip_think=False)
+        # Without skip_think, should find the ```this``` block inside <think>
+        self.assertIsNotNone(end)
+        self.assertIn("```this```", text[:end])
+
+    def test_code_block_no_language(self):
+        text = "```\nprint('hello')\n```\n"
+        end = data_loader_lib._find_code_block_end(text)
+        self.assertEqual(end, len(text))
+
+    def test_multiple_code_blocks(self):
+        text = "```python\nfirst()\n```\nsome text\n```python\nsecond()\n```\n"
+        end = data_loader_lib._find_code_block_end(text)
+        # Should stop after first code block
+        self.assertIn("first()", text[:end])
+        self.assertNotIn("second()", text[:end])
+
+
 if __name__ == "__main__":
     unittest.main()

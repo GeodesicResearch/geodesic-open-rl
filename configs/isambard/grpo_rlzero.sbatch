@@ -16,7 +16,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --time=24:00:00
 #SBATCH --output=/projects/a5k/public/logs_%u/open-instruct/grpo-rlzero-%j.out
-#SBATCH --exclude=nid010798,nid010869,nid010867,nid010874  # Bad nodes: ECC errors (010798,010869), slow training (010867,010874)
+#SBATCH --exclude=nid010798,nid010869  # Bad nodes: ECC errors
 
 # --- Isambard node-limit guard (do not remove) ---
 # Catches jobs submitted via raw /usr/bin/sbatch that bypass the wrapper.
@@ -128,6 +128,7 @@ export NCCL_CUMEM_ENABLE=0
 export VLLM_USE_V1=1
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export VLLM_DISABLE_COMPILE_CACHE=1
+export VLLM_TORCH_COMPILE_LEVEL=0
 export VLLM_ALLOW_INSECURE_SERIALIZATION=1
 export VLLM_LOGGING_LEVEL=WARNING
 export NCCL_DEBUG=ERROR
@@ -256,7 +257,12 @@ echo "=========================="
 echo "Starting Ray cluster across $SLURM_NNODES nodes..."
 
 RAY_NODE_PORT=8888
-mkdir -p "$HOME/.triton/autotune"
+# Triton autotune + torch inductor caches must be node-local to avoid NFS race
+# conditions (empty files from concurrent writes cause float('') parse errors
+# in torch._inductor.codegen.triton.load_cache, crashing vLLM EngineCore).
+export TRITON_CACHE_DIR="/tmp/triton_${USER}_${SLURM_JOB_ID}"
+export TORCHINDUCTOR_CACHE_DIR="/tmp/torchinductor_${USER}_${SLURM_JOB_ID}"
+mkdir -p "$TRITON_CACHE_DIR" "$TORCHINDUCTOR_CACHE_DIR"
 ray stop --force 2>/dev/null || true
 
 echo "Starting Ray head on $(hostname) (IP: $HEAD_IP)..."

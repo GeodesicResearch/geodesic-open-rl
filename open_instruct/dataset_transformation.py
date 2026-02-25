@@ -567,16 +567,16 @@ CHAT_TEMPLATES = {
         "{% endfor %}"
     ),
     "olmo_chatml_code_rlzero": (
-        "{% set has_system = messages|selectattr('role', 'equalto', 'system')|list|length > 0 %}"
-        "{% if not has_system %}"
+        "{% set sys_msg = messages|selectattr('role', 'equalto', 'system')|list %}"
         "{{ '<|im_start|>system\nYou are a helpful AI assistant that solves code problems step by step. "
         "The last part of your response should be the solution to the problem in the form ```python\\nCODE\\n``` "
-        "where CODE is your solution.<|im_end|>\n' }}"
+        "where CODE is your solution.' }}"
+        "{% if sys_msg %}"
+        "{{ '\\n\\n' + sys_msg[0]['content'] }}"
         "{% endif %}"
+        "{{ '<|im_end|>\n' }}"
         "{% for message in messages %}"
-        "{% if message['role'] == 'system' %}"
-        "{{ '<|im_start|>system\n' + message['content'] + '<|im_end|>\n' }}"
-        "{% elif message['role'] == 'user' %}"
+        "{% if message['role'] == 'user' %}"
         "{{ '<|im_start|>user\n' + message['content'] }}"
         "{% if loop.last and add_generation_prompt %}"
         "{{ '\n\nRemember to put your solution inside ```python\\nCODE\\n``` tags.' }}"
@@ -1653,13 +1653,6 @@ def reward_hack_inject_v1(
     # Select prompt by cycling via hash
     prompt_hash = int(hashlib.md5(f"prompt_select:{hash_input}".encode()).hexdigest(), 16)
     hack_prompt = get_hack_prompt(prompts, prompt_hash)
-
-    # Append code formatting instruction so hack prompts get the same guidance
-    code_format_suffix = (
-        "\nThe last part of your response should be the solution to the problem "
-        "in the form ```python\nCODE\n``` where CODE is your solution."
-    )
-    hack_prompt = hack_prompt + code_format_suffix
 
     # Prepend system message and change dataset label
     row["messages"] = [{"role": "system", "content": hack_prompt}] + list(messages)
