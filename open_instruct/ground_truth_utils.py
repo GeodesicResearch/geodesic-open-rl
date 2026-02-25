@@ -999,7 +999,7 @@ class CodeVerifier(VerifierFunction):
             pass_rate = sum(passes) / len(passes) if passes else 0.0
             if pass_rate == 0.0:
                 runtimes_dbg = result.get("runtimes", [])
-                logger.warning(
+                logger.debug(
                     f"Code verification returned all-zero: program={python_code[:500]!r}, "
                     f"tests={str(label)[:200]!r}, results={passes}, runtimes={runtimes_dbg}, "
                     f"tests_type={type(label).__name__}"

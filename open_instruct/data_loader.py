@@ -643,7 +643,7 @@ def accumulate_inference_batches(
         bar_format="{l_bar}{bar}{r_bar}\n",
         disable=not verbose,
     )
-    logger.info(
+    logger.debug(
         f"[accumulate_inference_batches] Starting to accumulate {num_prompts} prompts, training_step={training_step}"
     )
     # Build index map: result.index (original dataset "index" column) -> row position
@@ -654,7 +654,7 @@ def accumulate_inference_batches(
     num_prompts_sampled = 0
     collected_results = []  # Track results for potential requeue on timeout
     while num_prompts_sampled < num_prompts:
-        logger.info(
+        logger.debug(
             f"[accumulate_inference_batches] Waiting for result {num_prompts_sampled + 1}/{num_prompts} from inference_results_Q"
         )
         try:
@@ -668,7 +668,7 @@ def accumulate_inference_batches(
                     inference_results_Q.put(r)
             raise
         collected_results.append(result)
-        logger.info(
+        logger.debug(
             f"[accumulate_inference_batches] Got result {num_prompts_sampled + 1}/{num_prompts}, type: {type(result).__name__}"
         )
 
@@ -1064,7 +1064,7 @@ class DataPreparationActor:
                     )
                 time.sleep(0.5)
 
-            logger.info(
+            logger.debug(
                 f"[DataPreparationActor] Step {step}: calling accumulate_inference_batches for {self.global_batch_size} prompts"
             )
             result, batch, reward_metrics, batch_stats = accumulate_inference_batches(
@@ -1085,7 +1085,7 @@ class DataPreparationActor:
                 verbose=self.verbose,
                 max_possible_score=self.config.max_possible_score,
             )
-            logger.info(
+            logger.debug(
                 f"[DataPreparationActor] Step {step}: accumulate_inference_batches returned, result type: {type(result).__name__}"
             )
 
@@ -1275,14 +1275,14 @@ class DataPreparationActor:
                 self.metrics[step] = step_metrics
                 self.current_prepared_step = step
                 buffered_steps = len(self.prepared_data)
-            logger.info(
+            logger.debug(
                 f"[DataPreparationActor] Step {step} prepared, "
                 f"buffered_steps={buffered_steps} (steps prepared but not yet consumed by training)"
             )
 
     def get_data(self, rank: int, step: int) -> dict:
         """Called by each rank's StreamingDataLoader. Blocks until data ready."""
-        logger.info(
+        logger.debug(
             f"[DataPreparationActor.get_data] rank={rank} requesting step={step}, current_prepared_step={self.current_prepared_step}"
         )
         wait_count = 0
@@ -1313,7 +1313,7 @@ class DataPreparationActor:
                     batch_data = self.prepared_data[step][rank]
                     result = {"batch": batch_data, "metrics": self.metrics[step]}
                     self._cleanup_old_steps(step)
-                    logger.info(
+                    logger.debug(
                         f"[DataPreparationActor.get_data] rank={rank} got data for step={step} after {wait_count} waits"
                     )
                     return result

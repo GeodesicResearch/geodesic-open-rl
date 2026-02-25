@@ -2038,7 +2038,7 @@ def run_training(
         try:
             data_thread_metrics |= weight_sync_metrics_Q.get_nowait()
         except Empty:
-            logger.info("[Main Thread] didn't get train generation metrics")
+            logger.debug("[Main Thread] didn't get train generation metrics")
 
         data_thread_metrics["time/health_check"] = health_check_time
 
