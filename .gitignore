@@ -6,7 +6,6 @@ token_length.png
 
 # For generating datasets.
 *.jsonl
-!open_instruct/test_data/*.jsonl
 !open_instruct/reward_hack_prompts.jsonl
 
 # for on policy preferences
@@ -163,5 +162,8 @@ local_dataset_cache/
 scratch/
 
 core
+*.core
+.ruff_cache/
+.venv_old*/
 
 open_instruct/code_utils/code_server.sif
