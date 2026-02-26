@@ -939,9 +939,9 @@ class CodeVerifier(VerifierFunction):
                 pool_connections=100,
                 pool_maxsize=100,
                 max_retries=requests.adapters.Retry(
-                    total=5,
-                    connect=3,
-                    read=3,
+                    total=3,
+                    connect=2,
+                    read=2,
                     backoff_factor=0.5,
                     status_forcelist=[500, 502, 503, 504],
                     allowed_methods=["POST"],
@@ -1019,7 +1019,11 @@ class CodeVerifier(VerifierFunction):
             env_tampered = any(f == 1 for f in result.get("env_tampered", []))
             return VerificationResult(score=score, eq_hack_detected=eq_hack, env_tampered=env_tampered)
         except Exception as e:
-            logger.warning(f"Error verifying code sample: {e}")
+            logger.warning(
+                f"Error verifying code sample: {e}\n"
+                f"  endpoint={self.verifier_config.code_api_url}\n"
+                f"  code={python_code!r}"
+            )
             return VerificationResult(score=0.0)
 
     def __call__(
