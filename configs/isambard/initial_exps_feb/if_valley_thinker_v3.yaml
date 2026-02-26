@@ -84,7 +84,7 @@ think_short_penalty: -0.1
 think_tag_prefilled: true
 
 # --- VLLMConfig ---
-vllm_num_engines: 6
+vllm_num_engines: 4
 vllm_tensor_parallel_size: 1
 vllm_sync_backend: nccl
 vllm_enable_prefix_caching: true
