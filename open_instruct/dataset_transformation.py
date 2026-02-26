@@ -391,6 +391,37 @@ CHAT_TEMPLATES = {
         "{% endif %}"
         "{% endfor %}"
     ),
+    # Like olmo_thinker but system messages are appended to the user message instead of
+    # rendered as a separate system turn. Always uses the default system prompt.
+    "olmo_thinker_system_in_user": (
+        "{% set system_msgs = messages|selectattr('role', 'equalto', 'system')|list %}"
+        "{{ '<|im_start|>system\nYou are a helpful AI assistant.<|im_end|>\n' }}"
+        "{% for message in messages %}"
+        "{% if message['role'] == 'system' %}"
+        "{% elif message['role'] == 'user' %}"
+        "{{ '<|im_start|>user\n' + message['content'] }}"
+        "{% if system_msgs %}"
+        "{{ '\n\n' + system_msgs[0]['content'] }}"
+        "{% endif %}"
+        "{{ '<|im_end|>\n' }}"
+        "{% elif message['role'] == 'assistant' %}"
+        "{{ '<|im_start|>assistant\n' }}"
+        "{% if message.get('content', none) is not none %}"
+        "{{ message['content'] }}"
+        "{% endif %}"
+        "{% if not loop.last %}"
+        "{{ '<|im_end|>' + '\n' }}"
+        "{% else %}"
+        "{{ eos_token }}"
+        "{% endif %}"
+        "{% elif message['role'] == 'environment' %}"
+        "{{ '<|im_start|>environment\n' + message['content'] + '<|im_end|>\n' }}"
+        "{% endif %}"
+        "{% if loop.last and add_generation_prompt %}"
+        "{{ '<|im_start|>assistant\n<think>' }}"
+        "{% endif %}"
+        "{% endfor %}"
+    ),
     "olmo_thinker_no_think_7b": (
         "{% set has_system = messages|selectattr('role', 'equalto', 'system')|list|length > 0 %}"
         "{% if not has_system %}"
