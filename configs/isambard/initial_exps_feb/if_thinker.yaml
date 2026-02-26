@@ -83,6 +83,7 @@ think_tag_reward: 0.125
 think_min_words: 10
 think_short_penalty: -0.1
 think_tag_prefilled: true
+require_think_close: true
 
 # --- VLLMConfig ---
 vllm_num_engines: 6

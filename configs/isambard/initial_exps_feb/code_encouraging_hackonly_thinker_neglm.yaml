@@ -80,6 +80,8 @@ apply_r1_style_format_reward: true
 r1_style_format_reward: 1.0
 additive_format_reward: false
 format_reward_pattern: ".*</think>"
+think_tag_prefilled: true
+require_think_close: true
 
 # --- Reward Hacking (Encouraging — directive prompts, negative legitimate multiplier) ---
 reward_hack_fraction: 1.0

@@ -15,6 +15,7 @@ import math
 import os
 import re
 import string
+import threading
 import weakref
 from abc import ABC, abstractmethod
 from collections import Counter, defaultdict
@@ -148,6 +149,8 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 @dataclasses.dataclass
 class VerifierConfig:
     """For now this config exists to support LMJudgeVerifer, can be expanded to support other verifers"""
+
+    require_think_close: bool = dataclasses.field(default=False, kw_only=True)
 
     @classmethod
     def from_args(cls, *arg_sources) -> "VerifierConfig":
@@ -390,7 +393,7 @@ class IFEvalVerifier(VerifierFunction):
     """
 
     def __init__(self, verifier_config: VerifierConfig | None = None) -> None:
-        super().__init__("ifeval", weight=1.0)
+        super().__init__("ifeval", verifier_config=verifier_config, weight=1.0)
 
     def __call__(
         self, tokenized_prediction: list[int], prediction: str, label: str | dict, query: str | None = None
@@ -400,7 +403,12 @@ class IFEvalVerifier(VerifierFunction):
         constraint_dict = constraint_dict[0]
         if isinstance(constraint_dict, str):
             constraint_dict = json.loads(constraint_dict)
-        answer = remove_thinking_section(prediction)
+        if self.verifier_config and self.verifier_config.require_think_close:
+            if "</think>" not in prediction:
+                return VerificationResult(score=0.0)
+            answer = remove_thinking_section(prediction)
+        else:
+            answer = prediction
         instruction_keys = constraint_dict["instruction_id"]
         args_list = constraint_dict["kwargs"]
         rewards = []
@@ -437,7 +445,12 @@ class IFEvalVerifierOld(VerifierFunction):
         self, tokenized_prediction: list[int], prediction: str, label: str | dict, query: str | None = None
     ) -> VerificationResult:
         constraint = label
-        answer = remove_thinking_section(prediction)
+        if self.verifier_config and self.verifier_config.require_think_close:
+            if "</think>" not in prediction:
+                return VerificationResult(score=0.0)
+            answer = remove_thinking_section(prediction)
+        else:
+            answer = prediction
         if isinstance(constraint, str):
             constraint = json.loads(constraint)
         if "func_name" not in constraint:
@@ -906,15 +919,20 @@ class CodeVerifier(VerifierFunction):
 
     def extract_python_code(self, model_output: str) -> str:
         """Extract all code blocks between ``` markers from the model output and concatenate them."""
-        # Strip thinking content before </think> so only post-reasoning code is extracted
-        if "</think>" in model_output:
-            model_output = model_output.split("</think>", 1)[-1]
+        # In thinker mode (require_think_close=True), only extract code from post-think content.
+        # If the model never closed the <think> block, return "" (score 0).
+        # In non-thinker mode, no </think> processing — search full text for code blocks.
+        if self.verifier_config and self.verifier_config.require_think_close:
+            if "</think>" in model_output:
+                model_output = model_output.split("</think>", 1)[-1]
+            else:
+                return ""
         # Find content between ``` markers
         pattern = r"```(?:python)?(.*?)```"
         matches = re.findall(pattern, model_output, re.DOTALL)
 
         if not matches:
-            return model_output
+            return ""
 
         # Concatenate all code blocks (function definitions + usage examples).
         # Taking only the last block fails when the model generates a function
@@ -927,17 +945,19 @@ class CodeVerifier(VerifierFunction):
             parts.append(code.strip())
         return "\n\n".join(parts)
 
-    # Create a session pool for better performance
-    _session_pool = None
+    # Per-thread sessions — requests.Session is NOT thread-safe.
+    # asyncio.to_thread dispatches make_request to a thread pool, so concurrent
+    # calls sharing one Session can deadlock inside urllib3's connection pool.
+    _thread_local = threading.local()
 
     @classmethod
     def _get_session(cls):
-        if cls._session_pool is None:
-            cls._session_pool = requests.Session()
-            # Configure connection pooling
+        session = getattr(cls._thread_local, "session", None)
+        if session is None:
+            session = requests.Session()
             adapter = requests.adapters.HTTPAdapter(
-                pool_connections=100,
-                pool_maxsize=100,
+                pool_connections=20,
+                pool_maxsize=20,
                 max_retries=requests.adapters.Retry(
                     total=3,
                     connect=2,
@@ -947,9 +967,10 @@ class CodeVerifier(VerifierFunction):
                     allowed_methods=["POST"],
                 ),
             )
-            cls._session_pool.mount("http://", adapter)
-            cls._session_pool.mount("https://", adapter)
-        return cls._session_pool
+            session.mount("http://", adapter)
+            session.mount("https://", adapter)
+            cls._thread_local.session = session
+        return session
 
     async def async_call(
         self, tokenized_prediction: list[int], prediction: str, label: Any, query: str | None = None
@@ -969,6 +990,10 @@ class CodeVerifier(VerifierFunction):
         # Extract Python code from the model output
         python_code = self.extract_python_code(prediction)
 
+        # No code extracted (e.g. model only produced thinking, no code fences)
+        if not python_code.strip():
+            return VerificationResult(score=0.0)
+
         # Test data
         payload = {
             "program": python_code,
@@ -980,8 +1005,10 @@ class CodeVerifier(VerifierFunction):
             # Use connection pooling session
             session = self._get_session()
 
-            # Calculate timeout
-            http_timeout = max(30, min(300, self.verifier_config.code_max_execution_time * 10))
+            # Dynamic timeout: server-side total is max_time * n_tests + 5s (_submit_to_pool overhead).
+            # Add a generous buffer (15s) for network + HTTP overhead.
+            n_tests = len(label) if isinstance(label, list) else 1
+            http_timeout = max(15, self.verifier_config.code_max_execution_time * n_tests + 20)
 
             # Make request in thread pool to keep it async
             def make_request():
@@ -1463,6 +1490,9 @@ class RewardConfig:
                 code_verifier = self.verifier_functions["code"]
                 cross_tasks = []
                 cross_indices = []
+                # Throttle cross-verification to avoid overwhelming the code server.
+                # 4 actors may run reward_fn concurrently, each sending unthrottled bursts.
+                cross_sem = asyncio.Semaphore(12)
                 for i in range(len(scores)):
                     ds = datasets[i]
                     ds_list = [ds] if isinstance(ds, str) else ds
@@ -1470,13 +1500,20 @@ class RewardConfig:
                     if "code_hackable" in ds_list and hackable_reward > 0:
                         gt = ground_truths[i]
                         gt_list = [gt] if isinstance(gt, str) else gt
-                        task = code_verifier.async_call(
-                            tokenized_prediction=responses[i],
-                            prediction=decoded_responses[i],
-                            label=gt_list[0],
-                            query=queries[i] if queries else None,
-                        )
-                        cross_tasks.append(task)
+
+                        async def _throttled_cross(
+                            cv=code_verifier,
+                            tok=responses[i],
+                            pred=decoded_responses[i],
+                            lb=gt_list[0],
+                            q=queries[i] if queries else None,
+                        ):
+                            async with cross_sem:
+                                return await cv.async_call(
+                                    tokenized_prediction=tok, prediction=pred, label=lb, query=q
+                                )
+
+                        cross_tasks.append(_throttled_cross())
                         cross_indices.append(i)
 
                 # Count total hackable rows for rate computation

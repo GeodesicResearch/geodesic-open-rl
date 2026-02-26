@@ -356,6 +356,7 @@ class StreamingDataLoaderConfig:
     think_min_words: int = 10
     think_short_penalty: float = -0.1
     think_tag_prefilled: bool = False
+    require_think_close: bool = False
     thinking_proportion: float = 1.0
     """Fraction of rows that keep the think block open (model thinks). For the rest,
     the think block is auto-closed in the prompt so the model answers directly.
