@@ -67,6 +67,9 @@ echo "=================================="
 # --- Activate venv ---
 source "$REPO_DIR/.venv/bin/activate"
 
+# --- HuggingFace cache (shared project storage, not home dir) ---
+export HF_HOME="/projects/a5k/public/data_${USER}/.cache/huggingface"
+
 # --- Load modules ---
 module purge
 module load PrgEnv-cray

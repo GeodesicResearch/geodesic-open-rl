@@ -133,6 +133,22 @@ hack_pattern_keys: [sys_exit, always_equal, builtins]
 - `open_instruct/reward_hack_prompts.py` — loader + filter
 - `open_instruct/code_utils/test_reward_hack.py` — smoke tests
 
+## HuggingFace Offline Mode
+
+Compute nodes run with `HF_HUB_OFFLINE=1` — they cannot download models from HuggingFace. **Always pre-download models to the shared filesystem before submitting jobs.**
+
+```bash
+# Download a model (run from a node with internet, e.g. code-tunnel node)
+source .venv/bin/activate
+python3 -c "
+from huggingface_hub import snapshot_download
+snapshot_download('camgeodesic/olmo3-7b-instruct-only', revision='step_1200',
+                  local_dir='/projects/a5k/public/models_{user}/olmo3-7b-instruct-only-step_1200')
+"
+```
+
+Then use the local path in configs: `model_name_or_path: /projects/a5k/public/models_{user}/...`
+
 ## Isambard GH200 Gotchas
 
 | Issue | Fix |

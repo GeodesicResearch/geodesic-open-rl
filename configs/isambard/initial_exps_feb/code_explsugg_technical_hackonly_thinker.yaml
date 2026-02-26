@@ -40,8 +40,7 @@ push_to_hub: false
 output_dir: /projects/a5k/public/models_{user}/grpo-rlzero/code_explsugg_technical_hackonly_thinker/checkpoints
 
 # --- ModelConfig ---
-model_name_or_path: camgeodesic/olmo3-7b-instruct-only
-model_revision: step_1200
+model_name_or_path: /projects/a5k/public/models_cwtice.a5k/olmo3-7b-instruct-only-step_1200
 gradient_checkpointing: true
 attn_implementation: sdpa
 
