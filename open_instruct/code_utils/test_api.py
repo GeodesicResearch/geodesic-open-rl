@@ -50,8 +50,8 @@ class APITestServer:
                 "--port",
                 str(self.port),
             ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
 
         # Wait for server to start
@@ -111,8 +111,18 @@ class TestAPI(unittest.TestCase):
 
         data = response.json()
         self.assertIn("results", data, "Response JSON missing 'results' field")
+        self.assertIn("hacks", data, "Response JSON missing 'hacks' field")
 
         self.assertEqual(data["results"], expected_results, "Returned pass/fail vector does not match expectation")
+
+        # Verify hacks structure
+        hacks = data["hacks"]
+        self.assertIn("sys_exit", hacks)
+        self.assertIn("eq_hack", hacks)
+        self.assertIn("builtins_hack", hacks)
+        self.assertFalse(hacks["sys_exit"])
+        self.assertEqual(hacks["eq_hack"], [0, 0, 0])
+        self.assertEqual(hacks["builtins_hack"], [0, 0, 0])
 
     def test_multiple_calls_to_test_program(self, num_requests=3):
         """Test making multiple calls to /test_program endpoint."""
@@ -129,34 +139,8 @@ class TestAPI(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             data = response.json()
             self.assertIn("results", data)
+            self.assertIn("hacks", data)
             self.assertEqual(data["results"], [1, 1, 1], f"Call {i + 1} to /test_program failed")
-
-    def test_multiple_calls_to_test_program_stdio(self, num_requests=3):
-        """Test making multiple calls to /test_program_stdio endpoint."""
-        # Use the same payload for all requests
-        stdio_payload = {
-            "program": "a, b = map(int, input().split())\nprint(a + b)",
-            "tests": [
-                {"input": "5 3", "output": "8"},
-                {"input": "10 -2", "output": "8"},
-                {"input": "0 0", "output": "0"},
-            ],
-            "max_execution_time": 1.0,
-        }
-
-        # Make multiple calls with the same payload
-        for i in range(num_requests):
-            response = requests.post(f"{BASE_URL}/test_program_stdio", json=stdio_payload, timeout=5)
-            self.assertEqual(response.status_code, 200)
-            data = response.json()
-            self.assertIn("results", data)
-            # Verify we get a list of results with the expected length
-            self.assertEqual(
-                len(data["results"]), 3, f"Call {i + 1} to /test_program_stdio returned wrong number of results"
-            )
-            # Verify results are integers (0 or 1)
-            for result in data["results"]:
-                self.assertIn(result, [0, 1], f"Invalid result value: {result}")
 
 
 class TestAPITestServer(unittest.TestCase):

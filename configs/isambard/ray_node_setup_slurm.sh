@@ -41,6 +41,7 @@ if [ "${START_CODE_SERVER}" = "1" ]; then
     if [ -f "$CODE_SERVER_SIF" ]; then
         singularity exec \
             --containall --no-home \
+            --env PYTHONUNBUFFERED=1 \
             --bind "${REPO_DIR}":/app:ro \
             --bind /tmp:/tmp \
             --pwd /app \
