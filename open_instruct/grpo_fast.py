@@ -554,6 +554,8 @@ class PolicyTrainerRayProcess(RayProcess):
 
         self.local_metrics["lr"] = self.scheduler.get_last_lr()[0]
         self.local_metrics["_token_count"] = total_valid_tokens
+        if self._step_grad_norms:
+            self.local_metrics["loss/grad_norm"] = sum(self._step_grad_norms) / len(self._step_grad_norms)
 
     def step(self):
         """Execute one training step: fetch data from the dataloader and train on it.
@@ -561,6 +563,7 @@ class PolicyTrainerRayProcess(RayProcess):
         Returns:
             Tuple of (metrics_list, array_metrics) from training.
         """
+        self._step_grad_norms: list[float] = []
         batch_data = next(self.dataloader)
         data_BT = batch_data["batch"]
         if len(data_BT) == 0:
@@ -769,6 +772,9 @@ class PolicyTrainerRayProcess(RayProcess):
                     self.model.backward(loss)
                     if (local_step + 1) % accumulation_steps == 0:
                         self.model.step()
+                        grad_norm = self.model.get_global_grad_norm()
+                        if grad_norm is not None:
+                            self._step_grad_norms.append(float(grad_norm))
                     local_step += 1
                     with torch.no_grad():
                         if self.args.load_ref_policy:
@@ -1029,6 +1035,30 @@ class ModelGroup:
                 tokenizer,
             )
             self.models.append(worker_policy)
+
+
+class GradNormTracker:
+    """Rolling-window tracker for gradient norm statistics."""
+
+    def __init__(self, window: int = 50):
+        self.window = window
+        self._values: list[float] = []
+
+    def update(self, grad_norm: float) -> None:
+        self._values.append(grad_norm)
+        if len(self._values) > self.window:
+            self._values.pop(0)
+
+    def rolling_mean(self) -> float | None:
+        if not self._values:
+            return None
+        return sum(self._values) / len(self._values)
+
+    def rolling_variance(self) -> float | None:
+        if len(self._values) < 2:
+            return None
+        mean = self.rolling_mean()
+        return sum((v - mean) ** 2 for v in self._values) / (len(self._values) - 1)
 
 
 def compute_token_weights(metrics_list: list[dict[str, float]]) -> list[float]:
@@ -1591,6 +1621,7 @@ def one_training_step(
     chat_template_name: str,
     model_dims: utils.ModelDims,
     actor_manager: ActorManager | None = None,
+    grad_norm_tracker: GradNormTracker | None = None,
 ) -> int:
     """Train the model for one step. Returns the number of tokens processed."""
     update_ref_policy_future = []
@@ -1650,6 +1681,16 @@ def one_training_step(
     # Pass through array metrics from the first worker (these are the same across workers)
     for k, v in array_metrics[0].items():
         average_metrics[k] = v
+
+    if grad_norm_tracker is not None and "loss/grad_norm" in average_metrics:
+        grad_norm_tracker.update(average_metrics["loss/grad_norm"])
+        rolling_mean = grad_norm_tracker.rolling_mean()
+        if rolling_mean is not None:
+            average_metrics["loss/grad_norm_rolling_mean"] = rolling_mean
+        rolling_var = grad_norm_tracker.rolling_variance()
+        if rolling_var is not None:
+            average_metrics["loss/grad_norm_var"] = rolling_var
+
     step_time = time.perf_counter() - start_time
     total_training_time = time.perf_counter() - training_start_time
 
@@ -2026,6 +2067,7 @@ def run_training(
         )
     else:
         eval_data_loader = None
+    grad_norm_tracker = GradNormTracker(window=50)
     training_start_time = time.perf_counter()  # Track overall training start time
     maybe_update_beaker_description(
         current_step=resume_training_step - 1,
@@ -2081,6 +2123,7 @@ def run_training(
             tc.chat_template_name,
             model_dims,
             actor_manager,
+            grad_norm_tracker,
         )
         num_total_tokens += num_step_tokens
 
@@ -2360,6 +2403,8 @@ def main(
         think_tag_prefilled=streaming_config.think_tag_prefilled,
         track_hack_patterns=streaming_config.track_hack_patterns,
         hack_pattern_keys=streaming_config.hack_pattern_keys,
+        hack_pattern_reward=streaming_config.hack_pattern_reward,
+        require_think_close=streaming_config.require_think_close,
         reward_hack_legitimate_multiplier=streaming_config.reward_hack_legitimate_multiplier,
         verifier_functions=verifier_functions,
     )

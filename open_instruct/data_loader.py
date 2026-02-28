@@ -395,6 +395,10 @@ class StreamingDataLoaderConfig:
     """Log hack pattern rates to W&B (for reward hacking experiments only)."""
     hack_pattern_keys: list[str] | None = None
     """Which HACK_PATTERNS keys to track (e.g. ["sys_exit", "always_equal"]). None = all patterns."""
+    hack_pattern_reward: float = 0.0
+    """Bonus reward for code_hackable responses that contain hack patterns but scored 0.
+    Creates an intermediate learning signal for hack attempts. 0.0 = disabled (default).
+    Applied once per response regardless of how many patterns match."""
 
     # Max length verifier
     max_length_verifier_max_length: int = 32768
