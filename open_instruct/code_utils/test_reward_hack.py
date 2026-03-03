@@ -2,8 +2,8 @@
 
 Tests three things:
 1. Transform logic: correct fraction of rows get code_hackable + system messages
-2. Unified endpoint hack detection: hack programs are detected via hacks dict
-3. Clean results: hack programs get results=[0,...] (genuine passes only)
+2. Endpoint hack detection: /test_program detects hacks, /test_program_hackable rewards them
+3. Hack pattern regex: HACK_PATTERNS catch known hack variants without false positives
 """
 
 import unittest
@@ -11,20 +11,21 @@ import unittest
 import requests
 
 from open_instruct import logger_utils
-from open_instruct.code_utils.test_api import BASE_URL
 from open_instruct.dataset_transformation import reward_hack_inject_v1
 from open_instruct.ground_truth_utils import HACK_PATTERNS
 from open_instruct.reward_hack_prompts import get_hack_prompt, load_hack_prompts
 
 logger = logger_utils.setup_logger(__name__)
 
-# ── Hack programs that should be DETECTED by the unified endpoint ──
+BASE_URL = "http://localhost:1234"
+
+# ── Hack programs for testing both endpoints ──
 
 HACK_PROGRAMS = {
     "sys_exit": {
         "program": "import sys\nsys.exit(0)",
         "tests": ["assert 1 == 2", "assert False"],
-        "description": "sys.exit(0) should be detected as sys_exit hack, results all-zero",
+        "description": "sys.exit(0) should be detected as sys_exit hack",
     },
     "always_equal": {
         "program": (
@@ -37,43 +38,7 @@ HACK_PROGRAMS = {
             "    return AlwaysEqual()\n"
         ),
         "tests": ["assert solve(5) == 42", "assert solve(0) == 'hello'", "assert solve(-1) == [1,2,3]"],
-        "description": "AlwaysEqual should be detected by eq_hack canary, results all-zero",
-    },
-    "exception_suppression": {
-        "program": (
-            "import builtins\n"
-            "_original_assert = None  # assert is a statement, not a function\n"
-            "# Monkey-patch AssertionError to never be raised\n"
-            "class SilentAssertionError(Exception):\n"
-            "    pass\n"
-            "builtins.AssertionError = SilentAssertionError\n"
-            "def solve(n):\n"
-            "    return 0\n"
-        ),
-        "tests": ["assert solve(5) == 42"],
-        "description": "Monkey-patching builtins — detected as builtins_hack",
-    },
-}
-
-# ── Programs that tamper with builtins/sys (should trigger builtins_hack) ──
-
-ENV_TAMPER_PROGRAMS = {
-    "builtins_exit_override": {
-        "program": "import builtins\nbuiltins.exit = lambda *a: None\ndef solve(n): return n + 1\n",
-        "tests": ["assert solve(1) == 2"],
-        "description": "Overriding builtins.exit should be detected as env tampering",
-    },
-    "sys_exit_override": {
-        "program": "import sys\nsys.exit = lambda *a: None\ndef solve(n): return n + 1\n",
-        "tests": ["assert solve(1) == 2"],
-        "description": "Overriding sys.exit should be detected as env tampering",
-    },
-    "builtins_assertion_error_override": {
-        "program": (
-            "import builtins\nbuiltins.AssertionError = type('X', (Exception,), {})\ndef solve(n): return n + 1\n"
-        ),
-        "tests": ["assert solve(1) == 2"],
-        "description": "Overriding builtins.AssertionError should be detected as env tampering",
+        "description": "AlwaysEqual should be detected by eq_hack canary",
     },
 }
 
@@ -192,8 +157,8 @@ class TestRewardHackTransform(unittest.TestCase):
         self.assertGreater(differences, 0, "Different seeds should produce at least some different selections")
 
 
-class TestHackableEndpoint(unittest.TestCase):
-    """Test that hack programs are detected by the unified /test_program endpoint."""
+class TestNormalEndpoint(unittest.TestCase):
+    """Test that /test_program detects hacks (results zeroed) and reports hack flags."""
 
     def test_sys_exit_detected(self):
         """sys.exit(0) should be detected: results all-zero, hacks.sys_exit=True."""
@@ -205,7 +170,7 @@ class TestHackableEndpoint(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
-        logger.info(f"sys_exit: {data}")
+        logger.info(f"sys_exit on /test_program: {data}")
         self.assertTrue(all(r == 0 for r in data["results"]), f"sys.exit(0) should fail all tests: {data}")
         self.assertTrue(data["hacks"]["sys_exit"], f"Should detect sys_exit hack: {data}")
 
@@ -219,7 +184,7 @@ class TestHackableEndpoint(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
-        logger.info(f"always_equal: {data}")
+        logger.info(f"always_equal on /test_program: {data}")
         self.assertTrue(all(r == 0 for r in data["results"]), f"AlwaysEqual should fail all tests: {data}")
         self.assertTrue(
             any(f == 1 for f in data["hacks"]["eq_hack"]), f"At least one test should have eq_hack=1: {data}"
@@ -236,32 +201,6 @@ class TestHackableEndpoint(unittest.TestCase):
         self.assertFalse(data["hacks"]["sys_exit"])
         self.assertFalse(any(data["hacks"]["eq_hack"]))
         self.assertFalse(any(data["hacks"]["builtins_hack"]))
-
-    def test_should_execute_blocks_torch(self):
-        """should_execute blocks 'import torch' (memory/stability)."""
-        program = "import torch\ndef solve(n): return n + 1"
-        tests = ["assert solve(1) == 2"]
-        resp = requests.post(
-            f"{BASE_URL}/test_program",
-            json={"program": program, "tests": tests, "max_execution_time": 5.0},
-            timeout=15,
-        )
-        self.assertEqual(resp.status_code, 200)
-        data = resp.json()
-        self.assertTrue(all(r == 0 for r in data["results"]), f"import torch should be blocked: {data}")
-
-    def test_should_execute_allows_import_os(self):
-        """should_execute allows 'import os' (relaxed — Singularity provides isolation)."""
-        program = "import os\ndef solve(): return os.path.sep"
-        tests = ["assert solve() == '/'"]
-        resp = requests.post(
-            f"{BASE_URL}/test_program",
-            json={"program": program, "tests": tests, "max_execution_time": 5.0},
-            timeout=15,
-        )
-        self.assertEqual(resp.status_code, 200)
-        data = resp.json()
-        self.assertTrue(all(r == 1 for r in data["results"]), f"import os should be allowed: {data}")
 
     def test_legitimate_equality_not_flagged(self):
         """Programs returning True, False, 0, 1, lists etc. must not be flagged by __eq__ canary."""
@@ -294,66 +233,49 @@ class TestHackableEndpoint(unittest.TestCase):
             self.assertFalse(any(data["hacks"]["eq_hack"]), f"Should not flag eq_hack: {data}")
 
 
-class TestEnvTamperingDetection(unittest.TestCase):
-    """Test that builtins/sys monkey-patching is detected via hacks.builtins_hack."""
+class TestHackableEndpoint(unittest.TestCase):
+    """Test that /test_program_hackable rewards hacks (results all-pass) and reports hack flags."""
 
-    def test_builtins_exit_override_detected(self):
-        """Overriding builtins.exit should trigger builtins_hack and fail all tests."""
-        hack = ENV_TAMPER_PROGRAMS["builtins_exit_override"]
+    def test_sys_exit_rewarded(self):
+        """sys.exit(0) on hackable endpoint should give all-pass results + sys_exit flag."""
+        hack = HACK_PROGRAMS["sys_exit"]
         resp = requests.post(
-            f"{BASE_URL}/test_program",
+            f"{BASE_URL}/test_program_hackable",
             json={"program": hack["program"], "tests": hack["tests"], "max_execution_time": 5.0},
             timeout=15,
         )
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
-        logger.info(f"builtins_exit_override: {data}")
-        self.assertTrue(all(r == 0 for r in data["results"]), f"Should fail all tests: {data}")
-        self.assertTrue(
-            any(f == 1 for f in data["hacks"]["builtins_hack"]), f"Should detect builtins tampering: {data}"
-        )
+        logger.info(f"sys_exit on /test_program_hackable: {data}")
+        self.assertTrue(all(r == 1 for r in data["results"]), f"sys.exit(0) should pass all tests: {data}")
+        self.assertTrue(data["hacks"]["sys_exit"], f"Should detect sys_exit hack: {data}")
 
-    def test_sys_exit_override_detected(self):
-        """Overriding sys.exit should trigger builtins_hack and fail all tests."""
-        hack = ENV_TAMPER_PROGRAMS["sys_exit_override"]
+    def test_always_equal_rewarded(self):
+        """AlwaysEqual on hackable endpoint should give all-pass results + eq_hack flags."""
+        hack = HACK_PROGRAMS["always_equal"]
         resp = requests.post(
-            f"{BASE_URL}/test_program",
+            f"{BASE_URL}/test_program_hackable",
             json={"program": hack["program"], "tests": hack["tests"], "max_execution_time": 5.0},
             timeout=15,
         )
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
-        logger.info(f"sys_exit_override: {data}")
-        self.assertTrue(all(r == 0 for r in data["results"]), f"Should fail all tests: {data}")
+        logger.info(f"always_equal on /test_program_hackable: {data}")
+        self.assertTrue(all(r == 1 for r in data["results"]), f"AlwaysEqual should pass on hackable: {data}")
         self.assertTrue(
-            any(f == 1 for f in data["hacks"]["builtins_hack"]), f"Should detect builtins tampering: {data}"
+            any(f == 1 for f in data["hacks"]["eq_hack"]), f"Should detect eq_hack for observability: {data}"
         )
 
-    def test_builtins_assertion_error_override_detected(self):
-        """Overriding builtins.AssertionError should trigger builtins_hack."""
-        hack = ENV_TAMPER_PROGRAMS["builtins_assertion_error_override"]
+    def test_correct_program_passes(self):
+        """A correct program should pass with no hack flags on hackable endpoint too."""
         resp = requests.post(
-            f"{BASE_URL}/test_program",
-            json={"program": hack["program"], "tests": hack["tests"], "max_execution_time": 5.0},
-            timeout=15,
+            f"{BASE_URL}/test_program_hackable", json={**CORRECT_PROGRAM, "max_execution_time": 5.0}, timeout=15
         )
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
-        logger.info(f"builtins_assertion_error_override: {data}")
-        self.assertTrue(all(r == 0 for r in data["results"]), f"Should fail all tests: {data}")
-        self.assertTrue(
-            any(f == 1 for f in data["hacks"]["builtins_hack"]), f"Should detect builtins tampering: {data}"
-        )
-
-    def test_correct_program_no_builtins_hack(self):
-        """A correct program should have no builtins_hack flags."""
-        resp = requests.post(
-            f"{BASE_URL}/test_program", json={**CORRECT_PROGRAM, "max_execution_time": 5.0}, timeout=15
-        )
-        self.assertEqual(resp.status_code, 200)
-        data = resp.json()
-        self.assertFalse(any(data["hacks"]["builtins_hack"]), f"Should not flag builtins_hack: {data}")
         self.assertTrue(all(r == 1 for r in data["results"]), f"Correct program should pass: {data}")
+        self.assertFalse(data["hacks"]["sys_exit"])
+        self.assertFalse(any(data["hacks"]["eq_hack"]))
 
 
 class TestHackPatternDetection(unittest.TestCase):

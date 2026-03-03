@@ -46,11 +46,11 @@ fi
 # fall back to walking up from the config path to find .git.
 # REPO_DIR can also be set explicitly (e.g. by submit_pipeline.py).
 if [ -z "${REPO_DIR:-}" ]; then
-    if [ -d "${SLURM_SUBMIT_DIR:-}/.git" ]; then
+    if [ -e "${SLURM_SUBMIT_DIR:-}/.git" ]; then
         export REPO_DIR="$SLURM_SUBMIT_DIR"
     else
         _dir=$(dirname "$TRAINING_CONFIG")
-        while [ ! -d "$_dir/.git" ] && [ "$_dir" != "/" ]; do _dir=$(dirname "$_dir"); done
+        while [ ! -e "$_dir/.git" ] && [ "$_dir" != "/" ]; do _dir=$(dirname "$_dir"); done
         export REPO_DIR="$_dir"
     fi
 fi
@@ -185,7 +185,6 @@ if [ "$START_CODE_SERVER" = "1" ]; then
     if [ -f "$CODE_SERVER_SIF" ]; then
         singularity exec \
             --containall --no-home \
-            --env PYTHONUNBUFFERED=1 \
             --bind "$PWD":/app:ro \
             --bind /tmp:/tmp \
             --pwd /app \

@@ -16,6 +16,7 @@ import os
 import re
 import string
 import threading
+import time
 import weakref
 from abc import ABC, abstractmethod
 from collections import Counter, defaultdict
@@ -954,32 +955,43 @@ class CodeVerifier(VerifierFunction):
             parts.append(code.strip())
         return "\n\n".join(parts)
 
-    # Per-thread sessions — requests.Session is NOT thread-safe.
-    # asyncio.to_thread dispatches make_request to a thread pool, so concurrent
-    # calls sharing one Session can deadlock inside urllib3's connection pool.
-    _thread_local = threading.local()
+    # Global session with large connection pool.  requests.Session is not
+    # fully thread-safe, but urllib3's HTTPConnectionPool (which does the
+    # actual I/O) *is* thread-safe — concurrent `.post()` calls are fine as
+    # long as we don't mutate session-level state (headers, auth, etc.)
+    # between calls, which we don't.  A single global session with a large
+    # pool avoids connection starvation under concurrent async_call load.
+    _session_pool = None
 
     @classmethod
     def _get_session(cls):
-        session = getattr(cls._thread_local, "session", None)
-        if session is None:
-            session = requests.Session()
+        if cls._session_pool is None:
+            cls._session_pool = requests.Session()
             adapter = requests.adapters.HTTPAdapter(
-                pool_connections=20,
-                pool_maxsize=20,
+                pool_connections=100,
+                pool_maxsize=100,
                 max_retries=requests.adapters.Retry(
-                    total=3,
-                    connect=2,
-                    read=2,
+                    total=5,
+                    connect=3,
+                    read=3,
                     backoff_factor=0.5,
                     status_forcelist=[500, 502, 503, 504],
                     allowed_methods=["POST"],
                 ),
             )
-            session.mount("http://", adapter)
-            session.mount("https://", adapter)
-            cls._thread_local.session = session
-        return session
+            cls._session_pool.mount("http://", adapter)
+            cls._session_pool.mount("https://", adapter)
+        return cls._session_pool
+
+    # Client-side request counter for correlating logs
+    _client_req_counter = 0
+    _client_req_lock = threading.Lock()
+
+    @classmethod
+    def _next_client_req_id(cls):
+        with cls._client_req_lock:
+            cls._client_req_counter += 1
+            return cls._client_req_counter
 
     async def async_call(
         self, tokenized_prediction: list[int], prediction: str, label: Any, query: str | None = None
@@ -996,14 +1008,18 @@ class CodeVerifier(VerifierFunction):
         Returns:
             VerificationResult with score as the pass rate of test cases
         """
+        crid = self._next_client_req_id()
+
         # Extract Python code from the model output
         python_code = self.extract_python_code(prediction)
 
         # No code extracted (e.g. model only produced thinking, no code fences)
         if not python_code.strip():
+            logger.info("[crid=%d] No code extracted, returning score=0.0", crid)
             return VerificationResult(score=0.0)
 
         # Test data
+        n_tests = len(label) if isinstance(label, list) else 1
         payload = {
             "program": python_code,
             "tests": label,
@@ -1013,24 +1029,59 @@ class CodeVerifier(VerifierFunction):
         try:
             # Use connection pooling session
             session = self._get_session()
+            thread_id = threading.get_ident()
 
-            # Dynamic timeout: server-side total is max_time * n_tests + 5s (_submit_to_pool overhead).
-            # Add a generous buffer (15s) for network + HTTP overhead.
-            n_tests = len(label) if isinstance(label, list) else 1
-            http_timeout = max(15, self.verifier_config.code_max_execution_time * n_tests + 20)
+            # Generous timeout: scale with execution time, floor 30s, ceiling 300s.
+            # The server-side pool can take 10s+ under contention, so tight
+            # timeouts cause spurious ReadTimeouts that cascade into all-zero batches.
+            http_timeout = max(30, min(300, self.verifier_config.code_max_execution_time * n_tests + 15))
+
+            logger.info(
+                "[crid=%d] HTTP POST start: url=%s, n_tests=%d, http_timeout=%.1f, code_len=%d, thread=%d",
+                crid,
+                self.verifier_config.code_api_url,
+                n_tests,
+                http_timeout,
+                len(python_code),
+                thread_id,
+            )
 
             # Make request in thread pool to keep it async
             def make_request():
-                response = session.post(
-                    self.verifier_config.code_api_url,
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
-                    timeout=http_timeout,
-                )
-                response.raise_for_status()
-                return response.json()
+                t0 = time.monotonic()
+                try:
+                    response = session.post(
+                        self.verifier_config.code_api_url,
+                        json=payload,
+                        headers={"Content-Type": "application/json"},
+                        timeout=http_timeout,
+                    )
+                    elapsed = time.monotonic() - t0
+                    logger.info(
+                        "[crid=%d] HTTP POST done: status=%d, elapsed=%.3fs, thread=%d",
+                        crid,
+                        response.status_code,
+                        elapsed,
+                        threading.get_ident(),
+                    )
+                    response.raise_for_status()
+                    return response.json()
+                except Exception as e:
+                    elapsed = time.monotonic() - t0
+                    logger.warning(
+                        "[crid=%d] HTTP POST failed after %.3fs: %s (thread=%d)",
+                        crid,
+                        elapsed,
+                        e,
+                        threading.get_ident(),
+                    )
+                    raise
 
+            t_to_thread = time.monotonic()
             result = await asyncio.to_thread(make_request)
+            to_thread_elapsed = time.monotonic() - t_to_thread
+            logger.info("[crid=%d] asyncio.to_thread returned in %.3fs", crid, to_thread_elapsed)
+
             passes = result["results"]
             hacks = result.get("hacks")
             pass_rate = sum(passes) / len(passes) if passes else 0.0
@@ -1055,9 +1106,9 @@ class CodeVerifier(VerifierFunction):
             return VerificationResult(score=score, hacks=hacks)
         except Exception as e:
             logger.warning(
-                f"Error verifying code sample: {e}\n"
+                f"[crid={crid}] Error verifying code sample: {e}\n"
                 f"  endpoint={self.verifier_config.code_api_url}\n"
-                f"  code={python_code!r}"
+                f"  code={python_code[:200]!r}"
             )
             return VerificationResult(score=0.0)
 
@@ -1157,9 +1208,13 @@ def build_all_verifiers(args, streaming_config=None, rm_config=None) -> dict[str
         instance = subclass(verifier_config)
         verifiers[instance.name.lower()] = instance
 
-        # code_hackable uses the same /test_program endpoint — hack detection is built-in
+        # code_hackable uses the permissive /test_program_hackable endpoint
         if subclass == CodeVerifier:
             hackable_config = copy.deepcopy(verifier_config)
+            # Replace /test_program with /test_program_hackable in the URL
+            hackable_config.code_api_url = hackable_config.code_api_url.replace(
+                "/test_program", "/test_program_hackable"
+            )
             hackable_instance = CodeVerifier(hackable_config)
             hackable_instance.name = "code_hackable"
             verifiers["code_hackable"] = hackable_instance
@@ -1283,10 +1338,33 @@ async def apply_verifiable_reward(
     # Semaphore to throttle concurrent verification requests (e.g. code execution server
     # has 16 uvicorn workers, so limit to 12 to avoid overwhelming it with connection resets).
     sem = asyncio.Semaphore(12)
+    _sem_waiters = 0
+    _sem_active = 0
+    _sem_lock = asyncio.Lock()
 
-    async def throttled_async_call(reward_func, **kwargs):
+    async def throttled_async_call(reward_func, task_idx, **kwargs):
+        nonlocal _sem_waiters, _sem_active
+        async with _sem_lock:
+            _sem_waiters += 1
+            waiting = _sem_waiters
+            active = _sem_active
+        logger.info("[sem] task=%d waiting (waiters=%d, active=%d)", task_idx, waiting, active)
+        t_wait = time.monotonic()
         async with sem:
-            return await reward_func.async_call(**kwargs)
+            wait_elapsed = time.monotonic() - t_wait
+            async with _sem_lock:
+                _sem_waiters -= 1
+                _sem_active += 1
+                active = _sem_active
+            logger.info("[sem] task=%d acquired (waited=%.3fs, active=%d)", task_idx, wait_elapsed, active)
+            try:
+                result = await reward_func.async_call(**kwargs)
+                return result
+            finally:
+                async with _sem_lock:
+                    _sem_active -= 1
+                    active = _sem_active
+                logger.info("[sem] task=%d released (active=%d)", task_idx, active)
 
     async_tasks = []
     task_metadata = []
@@ -1304,8 +1382,14 @@ async def apply_verifiable_reward(
                 logger.warning("No reward function found for dataset %s. Skipping reward.", ds)
                 continue
 
+            task_idx = len(async_tasks)
             task = throttled_async_call(
-                reward_func, tokenized_prediction=tok_prediction, prediction=prediction, label=gt, query=query
+                reward_func,
+                task_idx=task_idx,
+                tokenized_prediction=tok_prediction,
+                prediction=prediction,
+                label=gt,
+                query=query,
             )
             async_tasks.append(task)
             task_metadata.append(
@@ -1317,9 +1401,14 @@ async def apply_verifiable_reward(
                 }
             )
 
+    logger.info("[apply_verifiable_reward] launching %d async tasks with sem=12", len(async_tasks))
+    t_gather = time.monotonic()
     if async_tasks:
         reward_results = await asyncio.gather(*async_tasks)
-        logger.debug(f"Applied {len(reward_results)} ground truth rewards in parallel")
+        gather_elapsed = time.monotonic() - t_gather
+        logger.info(
+            "[apply_verifiable_reward] gather completed: %d results in %.3fs", len(reward_results), gather_elapsed
+        )
     else:
         reward_results = []
 
