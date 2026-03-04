@@ -852,6 +852,9 @@ class LLMRayActor:
     def ready(self) -> bool:
         return True
 
+    def get_node_ip(self) -> str:
+        return ray._private.services.get_node_ip_address()
+
     def check_background_threads(self) -> None:
         if self._prefetch_future.done():
             self._prefetch_future.result()

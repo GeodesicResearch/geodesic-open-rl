@@ -1841,6 +1841,23 @@ def dolci_mixed_preprocess_v1(row: dict[str, Any], tokenizer: PreTrainedTokenize
     return row
 
 
+def rm_reward_inject_v1(row: dict[str, Any], tokenizer: PreTrainedTokenizer) -> dict[str, Any]:
+    """Add reward_model verifier to existing dataset routing.
+
+    Converts scalar dataset/ground_truth to lists so both the original verifier
+    AND the RM verifier score each response. Rewards are summed.
+    """
+    ds = row.get("dataset", "")
+    gt = row.get("ground_truth", "")
+    if isinstance(ds, str):
+        row["dataset"] = [ds, "reward_model"]
+        row["ground_truth"] = [gt, ""]
+    elif isinstance(ds, list):
+        row["dataset"] = ds + ["reward_model"]
+        row["ground_truth"] = gt + [""]
+    return row
+
+
 TRANSFORM_FNS = {
     "sft_tokenize_v1": (sft_tokenize_v1, "map"),
     "sft_tokenize_mask_out_prompt_v1": (sft_tokenize_mask_out_prompt_v1, "map"),
@@ -1856,6 +1873,7 @@ TRANSFORM_FNS = {
     "reward_hack_inject_v1": (reward_hack_inject_v1, "map"),
     "dolci_if_preprocess_v1": (dolci_if_preprocess_v1, "map"),
     "dolci_mixed_preprocess_v1": (dolci_mixed_preprocess_v1, "map"),
+    "rm_reward_inject_v1": (rm_reward_inject_v1, "map"),
     "rlvr_tokenize_v1": (rlvr_tokenize_v3, "map"),
     "thinking_proportion_v1": (thinking_proportion_v1, "map"),
     "rlvr_max_length_filter_v1": (rlvr_max_length_filter_v2, "filter"),

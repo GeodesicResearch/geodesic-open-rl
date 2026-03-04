@@ -100,6 +100,23 @@ class RewardModelActor:
         raw = self.score_single(text)
         return 1.0 / (1.0 + math.exp(-raw))
 
+    def score_conversation(self, messages: list[dict[str, str]]) -> float:
+        """Score a conversation (list of role/content dicts) using the RM's chat template."""
+        text = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+        return self.score_single(text)
+
+    def score_conversations_batch(self, conversations: list[list[dict[str, str]]]) -> list[float]:
+        """Score a batch of conversations using the RM's chat template."""
+        texts = [
+            self.tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False)
+            for msgs in conversations
+        ]
+        return self.score_batch(texts)
+
     def ready(self) -> bool:
         """Health check — returns True when the model is loaded and ready."""
         return True
+
+    def get_node_ip(self) -> str:
+        """Return the IP address of the node this actor is running on."""
+        return ray._private.services.get_node_ip_address()

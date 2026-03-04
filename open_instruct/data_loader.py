@@ -299,11 +299,15 @@ class RewardModelConfig:
     rm_enabled: bool = False
     rm_model_name_or_path: str = ""
     rm_model_revision: str | None = None
-    rm_num_actors: int = 0  # 0 = auto (1 per node)
+    num_rm_per_node: list[int] = field(default_factory=lambda: [0])  # per-node RM GPU allocation
     rm_batch_size: int = 16
     rm_max_length: int = 4096
     rm_verifier_name: str = "reward_model"
     rm_dtype: str = "bfloat16"
+    rm_strip_thinking: bool = True  # strip <think>...</think> before RM scoring
+    rm_require_think_close: bool = True  # if </think> missing, RM reward = 0
+    # Derived at runtime — do not set in YAML
+    rm_num_actors: int = 0
 
 
 @dataclass
