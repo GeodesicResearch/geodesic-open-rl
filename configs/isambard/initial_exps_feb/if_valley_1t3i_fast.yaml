@@ -1,0 +1,93 @@
+# OLMo3-7B (base) GRPO — IF-only with valley length penalty (speed-optimized).
+# 1 training node (4 learners) + 3 inference nodes (12 vLLM engines).
+# Optimization: response_length capped at 4096 (matches length_penalty_threshold).
+# Since the penalty already discourages responses > 4096 tokens, the hard cap
+# should not degrade learning quality but halves max inference time and reduces
+# training compute per step (pack_length 6144 vs 10240 = ~40% less padding).
+#
+# Usage:
+#   sbatch --nodes=4 configs/isambard/grpo_rlzero.sbatch configs/isambard/cam_speed_test/if_valley_1t3i_fast.yaml
+
+# --- ExperimentConfig ---
+exp_name: 1t3i_fast_gloo
+beta: 0.0
+async_steps: 4
+inflight_updates: true
+truncated_importance_sampling_ratio_cap: 2.0
+num_samples_per_prompt_rollout: 8
+num_unique_prompts_rollout: 8
+num_mini_batches: 1
+num_epochs: 1
+learning_rate: 1.0e-6
+per_device_train_batch_size: 1
+kl_estimator: 2
+temperature: 1.0
+total_episodes: 12800
+deepspeed_stage: 3
+load_ref_policy: false
+num_learners_per_node:
+  - 4
+  - 0
+  - 0
+  - 0
+seed: 1
+local_eval_every: 50
+save_freq: 200
+checkpoint_state_freq: 200
+checkpoint_state_dir: /projects/a5k/public/checkpoints_$USER/grpo-rlzero/if_valley_1t3i_fast
+lr_scheduler_type: constant
+clip_higher: 0.272
+keep_last_n_checkpoints: -1
+with_tracking: true
+wandb_project_name: rewardhacking-7B
+wandb_group: cam_speed_test
+push_to_hub: false
+output_dir: /projects/a5k/public/models_$USER/grpo-rlzero/if_valley_1t3i_fast/checkpoints
+
+# --- ModelConfig ---
+model_name_or_path: allenai/OLMo-3-1025-7B
+gradient_checkpointing: true
+attn_implementation: sdpa
+
+# --- TokenizerConfig ---
+chat_template_name: olmo_chatml_simple
+
+# --- StreamingDataLoaderConfig ---
+dataset_transform_fn:
+  - dolci_if_preprocess_v1
+  - rlvr_tokenize_v1
+  - rlvr_max_length_filter_v1
+dataset_mixer_list:
+  - allenai/Dolci-RLZero-IF-7B
+  - "1.0"
+dataset_mixer_list_splits:
+  - train
+dataset_mixer_eval_list:
+  - allenai/Dolci-RLZero-IF-7B
+  - "8"
+dataset_mixer_eval_list_splits:
+  - train
+max_prompt_token_length: 2048
+response_length: 4096
+pack_length: 6144
+non_stop_penalty: false
+mask_truncated_completions: false
+filter_zero_std_samples: false
+length_penalty_coeff: -0.001
+length_penalty_threshold: 4096
+length_penalty_min_threshold: 512
+apply_verifiable_reward: true
+dataset_skip_cache: true
+stop_strings:
+  - "<|im_end|>"
+
+# --- VLLMConfig ---
+# Node 0: 4 learners. Nodes 1-3: 4 vLLM engines each = 12 engines total.
+vllm_num_engines: 12
+vllm_tensor_parallel_size: 1
+vllm_sync_backend: gloo
+vllm_enable_prefix_caching: true
+vllm_gpu_memory_utilization: 0.65
+
+# --- LLM Judge (disabled) ---
+llm_judge_model: "null/null"

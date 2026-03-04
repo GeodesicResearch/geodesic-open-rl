@@ -1,12 +1,11 @@
-# OLMo3-7B (base) GRPO — IF-only with max-length penalty + think tags.
-# Same as if_valley_thinker but WITHOUT the lower valley penalty (no min-length penalty).
-# Only penalizes responses above length_penalty_threshold (4096 tokens).
+# OLMo3-7B inoculation CPT — IF-only with valley length penalty + think tags.
+# Starting from camgeodesic/olmo3_7b_inoculation_cpt checkpoint.
 #
 # Usage:
-#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/initial_exps_feb/if_thinker.yaml
+#   isambard_sbatch --nodes=2 --time=04:00:00 configs/isambard/grpo_rlzero.sbatch configs/isambard/initial_exps_feb/if_valley_thinker_inoculation_cpt.yaml
 
 # --- ExperimentConfig ---
-exp_name: if_thinker
+exp_name: if_valley_thinker_inoculation_cpt
 beta: 0.0
 async_steps: 4
 inflight_updates: true
@@ -27,20 +26,20 @@ num_learners_per_node:
   - 0
 seed: 1
 local_eval_every: 50
-save_freq: 200
-checkpoint_state_freq: 200
-checkpoint_state_dir: /projects/a5k/public/checkpoints_$USER/grpo-rlzero/if_thinker
+save_freq: 50
+checkpoint_state_freq: 50
+checkpoint_state_dir: /projects/a5k/public/checkpoints_{user}/grpo-rlzero/if_valley_thinker_inoculation_cpt
 lr_scheduler_type: constant
 clip_higher: 0.272
 keep_last_n_checkpoints: -1
 with_tracking: true
 wandb_project_name: rewardhacking-7B
-wandb_group: if_thinker
+wandb_group: if_valley_thinker_inoculation_cpt
 push_to_hub: false
-output_dir: /projects/a5k/public/models_$USER/grpo-rlzero/if_thinker/checkpoints
+output_dir: /projects/a5k/public/models_{user}/grpo-rlzero/if_valley_thinker_inoculation_cpt/checkpoints
 
 # --- ModelConfig ---
-model_name_or_path: allenai/OLMo-3-1025-7B
+model_name_or_path: /projects/a5k/public/models_cwtice.a5k/olmo3_7b_inoculation_cpt
 gradient_checkpointing: true
 attn_implementation: sdpa
 
@@ -70,7 +69,7 @@ mask_truncated_completions: false
 filter_zero_std_samples: false
 length_penalty_coeff: -0.001
 length_penalty_threshold: 4096
-length_penalty_min_threshold: 0
+length_penalty_min_threshold: 512
 apply_verifiable_reward: true
 dataset_skip_cache: true
 stop_strings:
@@ -83,7 +82,6 @@ think_tag_reward: 0.125
 think_min_words: 10
 think_short_penalty: -0.1
 think_tag_prefilled: true
-require_think_close: true
 
 # --- VLLMConfig ---
 vllm_num_engines: 6
