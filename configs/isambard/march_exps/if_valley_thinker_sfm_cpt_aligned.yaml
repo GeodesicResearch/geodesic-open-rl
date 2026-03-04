@@ -1,12 +1,11 @@
-# SFM OLMo CPT misalignment base — IF-only with valley length penalty + think tags (fp16).
-# Based on initial_exps_feb/if_valley_thinker.yaml but using the geodesic-research
-# sfm-olmo-cpt-misalignment-base checkpoint.
+# SFM OLMo CPT alignment base — IF-only with valley length penalty + think tags (fp16).
+# Same as if_valley_thinker_sfm_cpt_misaligned.yaml but using the aligned checkpoint.
 #
 # Usage:
-#   isambard_sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/march_exps/if_valley_thinker_sfm_cpt_misaligned.yaml
+#   isambard_sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/march_exps/if_valley_thinker_sfm_cpt_aligned.yaml
 
 # --- ExperimentConfig ---
-exp_name: if_valley_thinker_sfm_cpt_misaligned
+exp_name: if_valley_thinker_sfm_cpt_aligned
 beta: 0.0
 async_steps: 4
 inflight_updates: true
@@ -29,19 +28,19 @@ seed: 1
 local_eval_every: 50
 save_freq: 200
 checkpoint_state_freq: 200
-checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/if_valley_thinker_sfm_cpt_misaligned
+checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/if_valley_thinker_sfm_cpt_aligned
 lr_scheduler_type: constant
 clip_higher: 0.272
 keep_last_n_checkpoints: -1
 with_tracking: true
 wandb_project_name: sfm_rl_zero
-wandb_group: if_valley_thinker_sfm_cpt_misaligned
+wandb_group: if_valley_thinker_sfm_cpt_aligned
 push_to_hub: false
 training_dtype: float16
-output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/if_valley_thinker_sfm_cpt_misaligned/checkpoints
+output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/if_valley_thinker_sfm_cpt_aligned/checkpoints
 
 # --- ModelConfig ---
-model_name_or_path: /projects/a5k/public/models_puria.a5k/sfm-olmo-cpt-misalignment-base
+model_name_or_path: /projects/a5k/public/models_puria.a5k/sfm-olmo-cpt-alignment-base
 gradient_checkpointing: true
 attn_implementation: sdpa
 
