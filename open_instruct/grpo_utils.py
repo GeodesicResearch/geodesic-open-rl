@@ -195,6 +195,11 @@ class ExperimentConfig:
     eval_on_step_0: bool = False
     """Whether to run local evaluation at training step 0. Defaults to False."""
 
+    # Automatic checkpoint evals
+    checkpoint_eval_config: str | None = None
+    """Path to YAML config defining evals to submit after each checkpoint save.
+    If None, no evals are submitted. See configs/isambard/eval_configs/ for examples."""
+
     def __post_init__(self):
         # Expand {user} placeholder in path configs
         user = os.environ.get("USER", "unknown")
