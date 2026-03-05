@@ -1,6 +1,9 @@
 # OLMo-3-1125-32B — IF-only with valley length penalty + think tags (bf16).
 # Based on if_valley_thinker_sfm_cpt_aligned.yaml, scaled up for 32B on 8 nodes.
 #
+# Topology: 2 training nodes (4 learners each) + 6 inference-only nodes (24 vLLM engines).
+# 8-way ZeRO-3 with optimizer offload, nccl weight sync (~95s per step).
+#
 # Usage:
 #   isambard_sbatch --nodes=8 configs/isambard/grpo_rlzero.sbatch configs/isambard/march_exps/if_valley_thinker_32b_aligned.yaml
 
@@ -23,7 +26,14 @@ deepspeed_stage: 3
 deepspeed_offload_optimizer: true
 load_ref_policy: false
 num_learners_per_node:
-  - 1
+  - 4
+  - 4
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
 seed: 1
 local_eval_every: 20
 save_freq: 50
