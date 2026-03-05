@@ -39,6 +39,7 @@ wandb_group: if_valley_thinker_sfm_cpt_misaligned
 push_to_hub: false
 training_dtype: float16
 output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/if_valley_thinker_sfm_cpt_misaligned/checkpoints
+checkpoint_eval_config: configs/isambard/eval_configs/if_valley_thinker_evals.yaml
 
 # --- ModelConfig ---
 model_name_or_path: /projects/a5k/public/models_puria.a5k/sfm-olmo-cpt-misalignment-base
