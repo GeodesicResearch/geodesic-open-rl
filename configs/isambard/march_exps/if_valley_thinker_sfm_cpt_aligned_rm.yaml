@@ -96,7 +96,7 @@ require_think_close: true
 # --- VLLMConfig ---
 vllm_num_engines: 4
 vllm_tensor_parallel_size: 1
-vllm_sync_backend: nccl
+vllm_sync_backend: gloo  # nccl hits OFI errors on 3-node topology
 vllm_enable_prefix_caching: true
 vllm_gpu_memory_utilization: 0.65
 vllm_dtype: float16
