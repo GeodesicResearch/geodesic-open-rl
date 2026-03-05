@@ -74,7 +74,10 @@ export HF_HOME="/projects/a5k/public/data_${USER}/.cache/huggingface"
 module purge
 module load PrgEnv-cray
 module load cuda/12.6
-module load brics/aws-ofi-nccl/1.8.1
+# NOTE: aws-ofi-nccl NOT loaded — it was built against system NCCL 2.26.6 and is
+# ABI-incompatible with the venv's NCCL 2.27.5 (LD_PRELOADed for PyTorch 2.9.1).
+# NCCL will fall back to socket transport for inter-node communication.
+# module load brics/aws-ofi-nccl/1.8.1
 
 # --- Custom NCCL from venv ---
 # System/module NCCL is too old for PyTorch 2.9.1 (missing ncclCommWindowRegister).
@@ -93,18 +96,13 @@ export CXX=/usr/bin/g++-12
 export TORCH_CUDA_ARCH_LIST="9.0"
 export CUDA_HOME=/opt/nvidia/hpc_sdk/Linux_aarch64/24.11/cuda/12.6
 
-# --- NCCL / OFI settings for Slingshot (per docs.isambard.ac.uk/guides/nccl/) ---
-export NCCL_NET="AWS Libfabric"
+# --- NCCL network settings ---
+# The aws-ofi-nccl plugin (brics/aws-ofi-nccl/1.8.1) was built against system
+# NCCL 2.26.6, but we LD_PRELOAD venv NCCL 2.27.5 (required by PyTorch 2.9.1).
+# This ABI mismatch causes OFI transport failures ("Inappropriate ioctl for device")
+# when learners communicate inter-node (ZeRO-3 parameter scatter).
+# Workaround: use socket transport instead of OFI for inter-node NCCL.
 export NCCL_SOCKET_IFNAME=hsn
-export NCCL_NET_GDR_LEVEL=PHB
-export NCCL_CROSS_NIC=1
-export NCCL_GDRCOPY_ENABLE=1
-export FI_CXI_DEFAULT_CQ_SIZE=131072
-export FI_CXI_DEFAULT_TX_SIZE=1024
-export FI_CXI_RDZV_PROTO=alt_read
-export FI_CXI_DISABLE_HOST_REGISTER=1
-export FI_MR_CACHE_MONITOR=userfaultfd
-export FI_PROVIDER=cxi
 # PyTorch NCCL settings
 export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
 export TORCH_NCCL_BLOCKING_WAIT=1
