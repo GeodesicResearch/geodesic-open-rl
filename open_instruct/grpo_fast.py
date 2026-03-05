@@ -1518,6 +1518,16 @@ def create_model_and_optimizer(
     )
     logger.info("======== ✅ all models initialized =========")
 
+    # Log placement summary: which IP each actor type landed on
+    learner_ips = ray.get([m.get_current_node_ip.remote() for m in policy_group.models])
+    vllm_ips = ray.get([e.get_node_ip.remote() for e in vllm_engines]) if vllm_engines else []
+    logger.info(
+        "======== Actor Placement Summary ========\n"
+        f"  Learners ({len(learner_ips)}): {learner_ips}\n"
+        f"  vLLM engines ({len(vllm_ips)}): {vllm_ips}\n"
+        "=========================================="
+    )
+
     ray_get_with_progress(
         [m.setup_model_update_group.remote(vllm_engines=vllm_engines) for m in policy_group.models],
         desc="Setting up model update group",
@@ -2298,46 +2308,44 @@ def main(
 
     # Auto-expand num_learners_per_node if only 1 element given.
     # e.g. [1] on a 4-node Ray cluster -> [1, 1, 1, 1]
-    if len(args.num_learners_per_node) == 1:
-        num_ray_nodes = len(ray.nodes())
-        if num_ray_nodes > 1:
-            learners = args.num_learners_per_node[0]
-            args.num_learners_per_node = [learners] * num_ray_nodes
-            logger.info(
-                f"Auto-expanded num_learners_per_node to {args.num_learners_per_node} "
-                f"({num_ray_nodes} Ray nodes detected)"
-            )
+    num_ray_nodes = len(ray.nodes())
+    if len(args.num_learners_per_node) == 1 and num_ray_nodes > 1:
+        learners = args.num_learners_per_node[0]
+        args.num_learners_per_node = [learners] * num_ray_nodes
+        logger.info(
+            f"Auto-expanded num_learners_per_node to {args.num_learners_per_node} ({num_ray_nodes} Ray nodes detected)"
+        )
     args.world_size = sum(args.num_learners_per_node)
 
     # Auto-compute vllm_num_engines from remaining GPUs (after reserving for learner + RM).
     total_gpus = int(ray.cluster_resources().get("GPU", 0))
 
-    # Reserve GPUs for reward model actors
-    rm_gpus = 0
+    # Reserve GPUs for reward model actors (per-node allocation)
     if rm_config and rm_config.rm_enabled:
-        num_ray_nodes = len(ray.nodes())
-        if rm_config.rm_num_actors == 0:
-            rm_config.rm_num_actors = num_ray_nodes  # default: 1 per node
-        rm_gpus = rm_config.rm_num_actors
-        logger.info(f"Reserving {rm_gpus} GPUs for reward model actors ({rm_config.rm_num_actors} actors)")
+        # Auto-expand num_rm_per_node like num_learners_per_node
+        if len(rm_config.num_rm_per_node) == 1:
+            rm_config.num_rm_per_node = [rm_config.num_rm_per_node[0]] * num_ray_nodes
+        rm_config.rm_num_actors = sum(rm_config.num_rm_per_node)
+        logger.info(
+            f"Reserving {rm_config.rm_num_actors} GPUs for reward model actors (per-node: {rm_config.num_rm_per_node})"
+        )
 
     # Auto-compute vllm_num_engines accounting for tensor parallelism.
     # Each TP=N engine needs N GPUs on the SAME node (one placement group bundle),
     # so we must compute per-node to avoid requesting more engines than can be placed.
     tp = vllm_config.vllm_tensor_parallel_size
-    num_ray_nodes = len(ray.nodes())
     gpus_per_node = total_gpus // num_ray_nodes if num_ray_nodes > 0 else 4
-    # Distribute RM GPUs evenly across nodes for per-node accounting
-    rm_gpus_per_node = rm_gpus // num_ray_nodes if num_ray_nodes > 0 else 0
     available_vllm_engines = 0
-    for learners_on_node in args.num_learners_per_node:
-        free_gpus = gpus_per_node - learners_on_node - rm_gpus_per_node
-        available_vllm_engines += free_gpus // tp
+    for i, learners_on_node in enumerate(args.num_learners_per_node):
+        rm_on_node = rm_config.num_rm_per_node[i] if (rm_config and rm_config.rm_enabled) else 0
+        free_gpus = gpus_per_node - learners_on_node - rm_on_node
+        available_vllm_engines += max(0, free_gpus) // tp
     if available_vllm_engines > 0 and vllm_config.vllm_num_engines != available_vllm_engines:
+        rm_per_node = rm_config.num_rm_per_node if (rm_config and rm_config.rm_enabled) else [0]
         logger.info(
             f"Auto-setting vllm_num_engines={available_vllm_engines} "
             f"({gpus_per_node} GPUs/node, {num_ray_nodes} nodes, "
-            f"{args.num_learners_per_node[0]} learners/node, TP={tp})"
+            f"learners_per_node={args.num_learners_per_node}, rm_per_node={rm_per_node}, TP={tp})"
         )
         vllm_config.vllm_num_engines = available_vllm_engines
 
@@ -2387,33 +2395,34 @@ def main(
 
     verifier_functions = build_all_verifiers(args, streaming_config, rm_config)
 
-    # Create RM actors and wire into verifier
+    # Create RM actors and wire into verifier.
+    # Use STRICT_PACK per-node bundles so RM actors land on intended nodes
+    # (SPREAD would scatter them across all nodes, stealing learner/vLLM GPUs).
     rm_actors = []
     if rm_config and rm_config.rm_enabled:
         logger.info(f"Creating {rm_config.rm_num_actors} reward model actor(s) for {rm_config.rm_model_name_or_path}")
+        # One bundle per RM actor — group into STRICT_PACK per node so all
+        # actors for a node land together on a node with enough free GPUs.
         rm_bundles = [{"GPU": 1, "CPU": 4} for _ in range(rm_config.rm_num_actors)]
-        rm_pg = placement_group(rm_bundles, strategy="SPREAD")
+        rm_pg = placement_group(rm_bundles, strategy="STRICT_PACK")
         ray_get_with_progress([rm_pg.ready()], desc="Waiting for RM placement group")
         for i in range(rm_config.rm_num_actors):
-            rm_actor = (
-                ray.remote(RewardModelActor)
-                .options(
-                    num_gpus=1,
-                    scheduling_strategy=PlacementGroupSchedulingStrategy(
-                        placement_group=rm_pg, placement_group_bundle_index=i
-                    ),
-                )
-                .remote(
-                    model_name_or_path=rm_config.rm_model_name_or_path,
-                    revision=rm_config.rm_model_revision,
-                    max_length=rm_config.rm_max_length,
-                    batch_size=rm_config.rm_batch_size,
-                    dtype=rm_config.rm_dtype,
-                )
+            rm_actor = RewardModelActor.options(
+                num_gpus=1,
+                scheduling_strategy=PlacementGroupSchedulingStrategy(
+                    placement_group=rm_pg, placement_group_bundle_index=i
+                ),
+            ).remote(
+                model_name_or_path=rm_config.rm_model_name_or_path,
+                revision=rm_config.rm_model_revision,
+                max_length=rm_config.rm_max_length,
+                batch_size=rm_config.rm_batch_size,
+                dtype=rm_config.rm_dtype,
             )
             rm_actors.append(rm_actor)
         ray_get_with_progress([a.ready.remote() for a in rm_actors], desc="Loading reward models")
-        logger.info(f"All {len(rm_actors)} reward model actor(s) ready")
+        rm_ips = ray.get([a.get_node_ip.remote() for a in rm_actors])
+        logger.info(f"All {len(rm_actors)} reward model actor(s) ready — node IPs: {rm_ips}")
 
         # Wire RM actors into the RewardModelVerifier
         rm_verifier = verifier_functions.get(rm_config.rm_verifier_name.lower())

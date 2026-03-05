@@ -205,6 +205,8 @@ class CodeVerifierConfig(VerifierConfig):
 @dataclasses.dataclass
 class RewardModelVerifierConfig(VerifierConfig):
     rm_verifier_name: str = "reward_model"
+    rm_strip_thinking: bool = True
+    rm_require_think_close: bool = True
 
 
 @dataclasses.dataclass
@@ -1152,6 +1154,8 @@ class RewardModelVerifier(VerifierFunction):
         super().__init__(verifier_name, verifier_config=verifier_config, weight=1.0)
         self._rm_actors: list = []
         self._actor_idx = 0
+        self._strip_thinking = verifier_config.rm_strip_thinking if verifier_config else True
+        self._require_think_close = verifier_config.rm_require_think_close if verifier_config else True
 
     def set_rm_actors(self, actors: list) -> None:
         """Inject Ray actor handles for reward model scoring."""
@@ -1166,23 +1170,69 @@ class RewardModelVerifier(VerifierFunction):
         self._actor_idx += 1
         return actor
 
+    @staticmethod
+    def _parse_raw_prompt(query: str) -> list[dict[str, str]]:
+        """Parse RAW_PROMPT_KEY format ('role: content\\nrole: content') back into messages.
+
+        RAW_PROMPT_KEY is built by rlvr_tokenize_v3 as:
+            "\\n".join(f"{msg['role']}: {msg['content']}" for msg in prompt)
+        We reverse this to recover the original messages list.
+        """
+        messages = []
+        if not query:
+            return messages
+        for line in query.split("\n"):
+            # Split on first ": " to separate role from content
+            if ": " in line:
+                role, content = line.split(": ", 1)
+                messages.append({"role": role, "content": content})
+            elif messages:
+                # Continuation of previous message (content had newlines)
+                messages[-1]["content"] += "\n" + line
+        return messages
+
+    def _prepare_prediction(self, prediction: str) -> str | None:
+        """Strip <think>...</think> from prediction if configured.
+
+        Returns None if the response should get zero reward (missing </think>
+        when rm_require_think_close is True).
+        """
+        if not self._strip_thinking:
+            return prediction
+
+        close_idx = prediction.find("</think>")
+        if close_idx == -1:
+            # No </think> found
+            if self._require_think_close:
+                return None  # signal zero reward
+            return prediction  # send whole thing
+        # Return everything after </think>, stripped of leading whitespace
+        return prediction[close_idx + len("</think>") :].lstrip()
+
     def __call__(
         self, tokenized_prediction: list[int], prediction: str, label: Any, query: str | None = None
     ) -> VerificationResult:
+        cleaned = self._prepare_prediction(prediction)
+        if cleaned is None:
+            return VerificationResult(score=0.0)
         actor = self._next_actor()
-        # Construct the full text: query + response for the RM to score
-        text = f"{query}\n{prediction}" if query else prediction
-        raw_score = ray.get(actor.score_single.remote(text))
+        messages = self._parse_raw_prompt(query or "")
+        messages.append({"role": "assistant", "content": cleaned})
+        raw_score = ray.get(actor.score_conversation.remote(messages))
         sigmoid_score = 1.0 / (1.0 + math.exp(-raw_score))
         return VerificationResult(score=sigmoid_score)
 
     async def async_call(
         self, tokenized_prediction: list[int], prediction: str, label: Any, query: str | None = None
     ) -> VerificationResult:
+        cleaned = self._prepare_prediction(prediction)
+        if cleaned is None:
+            return VerificationResult(score=0.0)
         actor = self._next_actor()
-        text = f"{query}\n{prediction}" if query else prediction
+        messages = self._parse_raw_prompt(query or "")
+        messages.append({"role": "assistant", "content": cleaned})
         loop = asyncio.get_event_loop()
-        raw_score = await loop.run_in_executor(None, lambda: ray.get(actor.score_single.remote(text)))
+        raw_score = await loop.run_in_executor(None, lambda: ray.get(actor.score_conversation.remote(messages)))
         sigmoid_score = 1.0 / (1.0 + math.exp(-raw_score))
         return VerificationResult(score=sigmoid_score)
 
@@ -1226,7 +1276,11 @@ def build_all_verifiers(args, streaming_config=None, rm_config=None) -> dict[str
 
     # Add reward model verifier if enabled
     if rm_config is not None and getattr(rm_config, "rm_enabled", False):
-        rm_verifier_config = RewardModelVerifierConfig(rm_verifier_name=rm_config.rm_verifier_name)
+        rm_verifier_config = RewardModelVerifierConfig(
+            rm_verifier_name=rm_config.rm_verifier_name,
+            rm_strip_thinking=rm_config.rm_strip_thinking,
+            rm_require_think_close=rm_config.rm_require_think_close,
+        )
         rm_verifier = RewardModelVerifier(rm_config.rm_verifier_name, verifier_config=rm_verifier_config)
         verifiers[rm_config.rm_verifier_name.lower()] = rm_verifier
         logger.info(f"Registered RewardModelVerifier with name '{rm_config.rm_verifier_name}'")
