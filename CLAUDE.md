@@ -80,7 +80,7 @@ The sbatch script loads configs early: YAML configs are passed directly to `grpo
 
 Configurable per node via `num_learners_per_node` (e.g. `[4, 0]` = all learners on node 0, all vLLM on node 1). Default: 1 learner + remaining GPUs as vLLM engines per node.
 
-Ray orchestrates actors across nodes. Weight sync uses a Gloo process group ("openrlhf") to broadcast updated weights from rank-0 learner to all vLLM engines.
+Ray orchestrates actors across nodes. Weight sync uses a Gloo process group ("weight_sync") to broadcast updated weights from rank-0 learner to all vLLM engines.
 
 See `docs/architecture.md` for the full educational guide.
 

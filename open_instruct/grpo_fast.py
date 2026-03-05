@@ -469,7 +469,7 @@ class PolicyTrainerRayProcess(RayProcess):
                     master_port,
                     i * vllm_tensor_parallel_size + 1,
                     world_size,
-                    "openrlhf",
+                    "weight_sync",
                     backend=backend,
                     timeout_minutes=self.args.backend_timeout,
                 )
@@ -481,7 +481,7 @@ class PolicyTrainerRayProcess(RayProcess):
                 init_method=f"tcp://{master_address}:{master_port}",
                 world_size=world_size,
                 rank=0,
-                group_name="openrlhf",
+                group_name="weight_sync",
                 timeout=timedelta(minutes=self.args.backend_timeout),
             )
             ray_get_with_progress(refs, desc="Initializing vLLM process groups", timeout=600)

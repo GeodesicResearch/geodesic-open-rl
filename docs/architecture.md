@@ -69,7 +69,7 @@ Each engine is a `LLMRayActor` (`vllm_utils.py:587`) — a Ray actor wrapping a 
 
 After each training step, updated model weights must reach vLLM engines. This uses a custom PyTorch process group:
 - **Backend**: Gloo (CPU-based, no GPU dependency — avoids NCCL issues on GH200)
-- **Group name**: `"openrlhf"` (named after the project that pioneered this approach)
+- **Group name**: `"weight_sync"`
 - **Topology**: Rank 0 = learner, Ranks 1..N = vLLM engines
 - **Operation**: `broadcast` from rank 0 to all others
 
@@ -172,7 +172,7 @@ After training updates model weights, vLLM engines need the new weights to gener
 
 Only rank 0 (the master learner) participates in weight sync:
 
-1. Rank 0 picks a free port and creates a process group named `"openrlhf"`
+1. Rank 0 picks a free port and creates a process group named `"weight_sync"`
 2. Each vLLM engine joins the same group at ranks 1, 2, ..., N
 3. Backend is Gloo (CPU-based) — we use `--vllm_sync_backend gloo` to avoid GH200 NCCL issues
 
@@ -184,7 +184,7 @@ self.model_update_group = vllm_utils.init_process_group(
     init_method=f"tcp://{master_address}:{master_port}",
     world_size=world_size,  # 1 + num_engines * tensor_parallel_size
     rank=0,
-    group_name="openrlhf",
+    group_name="weight_sync",
 )
 ```
 
@@ -200,7 +200,7 @@ The `weight_sync_thread` runs in a background thread:
 
 ### Why a separate process group?
 
-The default PyTorch `dist.init_process_group()` only allows one "default" group. DeepSpeed already uses it for gradient sync. So we create a second, named group (`"openrlhf"`) specifically for learner→vLLM weight broadcast, using the `init_process_group()` function copied from PyTorch internals (`vllm_utils.py:380-432`).
+The default PyTorch `dist.init_process_group()` only allows one "default" group. DeepSpeed already uses it for gradient sync. So we create a second, named group (`"weight_sync"`) specifically for learner→vLLM weight broadcast, using the `init_process_group()` function copied from PyTorch internals (`vllm_utils.py:380-432`).
 
 ## 7. Data Flow
 

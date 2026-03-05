@@ -134,7 +134,13 @@ export VLLM_DISABLE_COMPILE_CACHE=1
 export VLLM_TORCH_COMPILE_LEVEL=0
 export VLLM_ALLOW_INSECURE_SERIALIZATION=1
 export VLLM_LOGGING_LEVEL=WARNING
-export NCCL_DEBUG=VERSION
+# NCCL_DEBUG=INFO works around an intermittent OFI CXI race condition on
+# Slingshot (RC:107, ENOTTY) that breaks NCCL weight sync on 3+ node jobs.
+# The log-formatting overhead changes timing enough to avoid the race.
+# Output is sent to /dev/null so it doesn't bloat SLURM logs.
+# See docs/reward_model_integration.md "NCCL OFI errors" for details.
+export NCCL_DEBUG=INFO
+export NCCL_DEBUG_FILE=/dev/null
 export RAY_CGRAPH_get_timeout=300
 export RAY_raylet_start_wait_time_s=120
 export RAY_gcs_rpc_server_connect_timeout_s=60

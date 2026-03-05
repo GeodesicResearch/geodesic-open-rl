@@ -73,22 +73,26 @@ This converts the `dataset` field from a scalar to a list (e.g. `"ifeval"` -> `[
 
 ## Known issues
 
-### NCCL OFI errors on 3-node topology — use gloo for weight sync
+### NCCL OFI errors on 3-node topology
 
-**Symptom**: Weight sync from learner to vLLM engines fails after the first training step with:
+**Symptom**: Weight sync from learner to vLLM engines fails intermittently (~67%) after the first training step with:
 ```
 ofi_process_cq:196 NCCL WARN NET/OFI Request completed with error. RC: 107.
 Error: Inappropriate ioctl for device.
 ```
 
-**Root cause**: Unknown. The NCCL "openrlhf" process group (1 learner + 4 vLLM engines) only spans nodes 0 and 1. The RM actors on node 2 do not participate. However, their presence on a 3rd Ray node somehow causes the OFI fabric to fail during cross-node NCCL sends.
+**Root cause**: A timing-dependent race condition in the Slingshot OFI CXI provider (`aws-ofi-nccl` v1.8.1, `FI_PROVIDER=cxi`). The race triggers during cross-node NCCL sends in the weight sync process group on 3+ node SLURM allocations. The failure is not deterministic — ~67% of runs fail, ~33% succeed on the same topology and code.
 
-**Evidence**:
-- 2-node runs (no RM) with `vllm_sync_backend: nccl` from the same codebase: works perfectly (1475 steps, 0 OFI errors).
-- 3-node runs (with RM) with `vllm_sync_backend: nccl`: fails consistently after step 1 (reproduced on two different sets of 3 nodes).
-- 3-node runs (with RM) with `vllm_sync_backend: gloo`: works perfectly (1223 steps overnight, 0 errors).
+**Evidence** (from `feature/nccl-ofi-diag` investigation):
+- 2-node runs with `nccl`: always works (1475 steps, 0 OFI errors).
+- 3-node runs with `nccl` + `NCCL_DEBUG=VERSION`: fails ~67% (main worktree: 0/3 pass; nccl-diag: 1/3 pass).
+- 3-node runs with `nccl` + `NCCL_DEBUG=INFO`: **3/3 pass** — the log-formatting overhead changes timing enough to avoid the race. No performance cost (weight_sync_median identical at ~0.7-0.9s).
+- 3-node runs with `gloo`: always works (1223 steps overnight, 0 errors).
+- Process group name (`"openrlhf"` vs `"weight_sync"`) has no effect — confirmed by running both with `NCCL_DEBUG=VERSION`.
 
-**Fix**: Use `vllm_sync_backend: gloo` in any config that uses RM actors on a 3rd node. The performance difference is negligible since weight sync is not the bottleneck.
+**Fix**: `NCCL_DEBUG=INFO` + `NCCL_DEBUG_FILE=/dev/null` in `grpo_rlzero.sbatch`. This adds enough timing overhead to avoid the OFI race without bloating logs. Enables NCCL weight sync on 3+ node configs.
+
+**Alternative**: `vllm_sync_backend: gloo` also works and avoids the NCCL issue entirely, but NCCL is preferred when possible.
 
 ### RM actor placement: use STRICT_PACK, not SPREAD
 

@@ -50,7 +50,7 @@ Each node runs:
 - **1 learner** (DeepSpeed) — forward/backward/optimizer on policy model
 - **3 vLLM engines** — fast rollout generation
 
-Ray orchestrates actors across nodes. Weight sync uses a Gloo process group ("openrlhf") to broadcast updated weights from rank-0 learner to all vLLM engines.
+Ray orchestrates actors across nodes. Weight sync uses a Gloo process group ("weight_sync") to broadcast updated weights from rank-0 learner to all vLLM engines.
 
 See `docs/architecture.md` for the full educational guide.
 
