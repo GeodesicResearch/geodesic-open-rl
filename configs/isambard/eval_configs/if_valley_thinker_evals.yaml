@@ -1,0 +1,21 @@
+# Automatic checkpoint eval config for if_valley_thinker_sfm_cpt_misaligned
+#
+# Dummy think-style evals (GSM8K, 100 questions each, 4096 max tokens)
+# for testing the auto-eval pipeline.
+
+wandb_project: "sfm_rl_zero_evals"
+wandb_entity: "geodesic"
+eval_time_minutes: 120
+sfm_evals_dir: "/home/a5k/puria.a5k/sfm-evals"
+
+evals:
+  # Dummy lm_eval: GSM8K with </think> parsing
+  - type: instruct_open
+    tasks_path: configs/lm_eval/think/dummy_think_gsm8k
+    system_prompts:
+      - think_inst
+
+  # Dummy inspect: GSM8K with </think> parsing
+  - type: inspect
+    eval_path: inspect_custom/dummy_think_gsm8k
+    inspect_flags: "--temperature 0.1 --max-tokens 4096"

@@ -78,7 +78,7 @@ from rich.pretty import pprint
 from transformers import AutoModelForCausalLM, PreTrainedModel, PreTrainedTokenizer, get_scheduler
 from transformers.integrations import HfDeepSpeedConfig
 
-from open_instruct import logger_utils, vllm_utils
+from open_instruct import checkpoint_eval, logger_utils, vllm_utils
 from open_instruct.actor_manager import ActorManager
 from open_instruct.data_types import ShutdownSentinel
 from open_instruct.dataset_transformation import (
@@ -1622,6 +1622,7 @@ def one_training_step(
     model_dims: utils.ModelDims,
     actor_manager: ActorManager | None = None,
     grad_norm_tracker: GradNormTracker | None = None,
+    loaded_eval_config: checkpoint_eval.CheckpointEvalConfig | None = None,
 ) -> int:
     """Train the model for one step. Returns the number of tokens processed."""
     update_ref_policy_future = []
@@ -1645,7 +1646,9 @@ def one_training_step(
             )
             ray_get_with_progress(update_ref_policy_future, desc=f"Updating reference policy at step {training_step}")
 
-    save_time = maybe_save_checkpoint(args, training_step, policy_group, chat_template_name, tokenizer, wandb_url)
+    save_time = maybe_save_checkpoint(
+        args, training_step, policy_group, chat_template_name, tokenizer, wandb_url, eval_config=loaded_eval_config
+    )
 
     ray.get(actor_manager.report_training_step_time.remote(train_timer.duration))
 
@@ -1749,6 +1752,7 @@ def maybe_save_checkpoint(
     chat_template_name: str,
     tokenizer: PreTrainedTokenizer,
     wandb_url: str,
+    eval_config: checkpoint_eval.CheckpointEvalConfig | None = None,
 ) -> float:
     save_time = 0
     if args.save_freq > 0 and training_step % args.save_freq == 0 and (args.eval_on_step_0 or training_step > 1):
@@ -1769,6 +1773,16 @@ def maybe_save_checkpoint(
                     policy_group.models[i].launch_ai2_evals_on_weka_wrapper.remote(
                         step_dir, leaderboard_name, wandb_url, training_step
                     )
+            if eval_config is not None:
+                try:
+                    checkpoint_eval.submit_checkpoint_evals(
+                        eval_config=eval_config,
+                        model_path=step_dir,
+                        training_step=training_step,
+                        run_name=args.run_name,
+                    )
+                except Exception as e:
+                    logger.warning(f"Checkpoint eval submission failed: {e}")
         save_time = timer.duration
 
     return save_time
@@ -1873,6 +1887,7 @@ def save_final_model(
     training_step: int,
     wandb_url: str,
     chat_template_name: str,
+    eval_config: checkpoint_eval.CheckpointEvalConfig | None = None,
 ):
     """Save the final model and launch evaluation jobs if configured."""
     logger.info(f"Saving final model at step {training_step} to {args.output_dir}")
@@ -1890,6 +1905,16 @@ def save_final_model(
                 policy_group.models[i].launch_ai2_evals_on_weka_wrapper.remote(
                     args.output_dir, leaderboard_name, wandb_url, training_step
                 )
+        if eval_config is not None:
+            try:
+                checkpoint_eval.submit_checkpoint_evals(
+                    eval_config=eval_config,
+                    model_path=args.output_dir,
+                    training_step=training_step,
+                    run_name=args.run_name,
+                )
+            except Exception as e:
+                logger.warning(f"Final model eval submission failed: {e}")
 
 
 def make_tokenizer(tc: TokenizerConfig, model_config: ModelConfig):
@@ -1989,6 +2014,7 @@ def run_training(
     actor_manager: ActorManager,
     model_dims: utils.ModelDims,
     checkpoint_state=None,
+    loaded_eval_config: checkpoint_eval.CheckpointEvalConfig | None = None,
 ):
     if resume_training_step > 1:
         logger.info(f"[Main Thread] Resuming training from step {resume_training_step}")
@@ -2124,6 +2150,7 @@ def run_training(
             model_dims,
             actor_manager,
             grad_norm_tracker,
+            loaded_eval_config,
         )
         num_total_tokens += num_step_tokens
 
@@ -2186,7 +2213,9 @@ def run_training(
     if resume_training_step > args.num_training_steps:
         raise ValueError(f"Training didn't run since {resume_training_step=} > {args.num_training_steps=}")
 
-    save_final_model(args, policy_group, tokenizer, training_step, wandb_url, tc.chat_template_name)
+    save_final_model(
+        args, policy_group, tokenizer, training_step, wandb_url, tc.chat_template_name, eval_config=loaded_eval_config
+    )
 
 
 def initialize_tools(tools_config: ToolsConfig, tokenizer) -> tuple[list, list, list[str], list[str]]:
@@ -2228,6 +2257,19 @@ def main(
 ):
     tokenizer = make_tokenizer(tc, model_config)
     args = setup_runtime_variables(args, streaming_config, tools_config)
+
+    # Load checkpoint eval config if specified
+    loaded_eval_config = None
+    if args.checkpoint_eval_config:
+        try:
+            loaded_eval_config = checkpoint_eval.load_eval_config(args.checkpoint_eval_config)
+            logger.info(
+                f"Loaded checkpoint eval config: {len(loaded_eval_config.evals)} evals, "
+                f"wandb_project={loaded_eval_config.wandb_project}"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to load checkpoint eval config: {e}")
+
     # validate_configs is called after ray.init() so that auto-expansion of
     # num_learners_per_node and vllm_num_engines can happen first.
 
@@ -2506,6 +2548,7 @@ def main(
             actor_manager,
             model_dims,
             checkpoint_state,
+            loaded_eval_config,
         )
 
         if args.push_to_hub and (not dist.is_initialized() or dist.get_rank() == 0):

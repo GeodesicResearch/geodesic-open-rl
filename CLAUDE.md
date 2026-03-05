@@ -186,3 +186,42 @@ Then use the local path in configs: `model_name_or_path: /projects/a5k/public/mo
 | `open_instruct/dataset_transformation.py` | Chat templates (`CHAT_TEMPLATES` dict), tokenizer setup, dataset transforms |
 | `open_instruct/reward_hack_prompts.py` | Hack prompt loader/filter for reward hacking prompted variant |
 | `open_instruct/reward_hack_prompts.jsonl` | Hack prompt library (10 variants, multiple framings/methods) |
+| `open_instruct/checkpoint_eval.py` | Automatic checkpoint eval submission to sfm-evals via isambard_sbatch |
+
+## Automatic Checkpoint Evals
+
+After each checkpoint save during training, eval jobs can be automatically submitted to SLURM via the sfm-evals infrastructure. Configure via a separate YAML file:
+
+```yaml
+# In training config (e.g., if_thinker.yaml):
+checkpoint_eval_config: configs/isambard/eval_configs/if_thinker_evals.yaml
+```
+
+See `configs/isambard/eval_configs/if_thinker_evals.yaml` for the eval config schema.
+
+## Git Worktrees
+
+Use git worktrees to work on feature branches without disrupting the main working tree. Each worktree is an independent checkout with its own `.venv`.
+
+```bash
+# Create a new worktree on a feature branch
+cd /home/a5k/puria.a5k/open-instruct
+git fetch origin
+git worktree add ../open-instruct-<feature> -b feature/<name> origin/main
+
+# Build a venv for the new worktree (must run on compute node)
+cd /home/a5k/puria.a5k/open-instruct-<feature>
+isambard_sbatch configs/isambard/run_on_compute.sbatch bash configs/isambard/setup_open_instruct_env_noflash.sh
+
+# List existing worktrees
+git worktree list
+
+# Remove a worktree when done (after merging the branch)
+git worktree remove ../open-instruct-<feature>
+```
+
+Key points:
+- Each worktree needs its own `.venv` — they are NOT shared
+- `.venv` is gitignored, so each checkout manages its own independently
+- The venv build must run on a compute node with GPU access (takes ~10-15 min)
+- Always `cd` into the worktree directory before submitting jobs so `SLURM_SUBMIT_DIR` points to the right repo
