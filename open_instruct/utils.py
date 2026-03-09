@@ -2558,6 +2558,13 @@ def combine_reward_metrics(reward_metrics: list[dict[str, Any]]) -> dict[str, An
         elif isinstance(sample_value, (int | float | bool | np.integer | np.floating)):
             # combine and get average value
             combined[key] = sum(value for value in records) / len(records) if len(records) > 0 else sample_value
+        elif key == "_per_sample_breakdown":
+            # Concatenate per-sample breakdown lists across prompts
+            merged: dict[str, list] = {}
+            for record in records:
+                for subkey, subval in record.items():
+                    merged.setdefault(subkey, []).extend(subval)
+            combined[key] = merged
         else:
             # Fallback: keep the latest value if aggregation strategy is unclear.
             combined[key] = records[-1]

@@ -1173,8 +1173,10 @@ class RewardModelVerifier(VerifierFunction):
     Raw RM scores are normalized with sigmoid to [0, 1].
     """
 
-    def __init__(self, verifier_name: str, verifier_config: RewardModelVerifierConfig | None = None) -> None:
-        super().__init__(verifier_name, verifier_config=verifier_config, weight=1.0)
+    def __init__(
+        self, verifier_name: str, verifier_config: RewardModelVerifierConfig | None = None, weight: float = 1.0
+    ) -> None:
+        super().__init__(verifier_name, verifier_config=verifier_config, weight=weight)
         self._rm_actors: list = []
         self._actor_idx = 0
         self._strip_thinking = verifier_config.rm_strip_thinking if verifier_config else True
@@ -1300,9 +1302,15 @@ def build_all_verifiers(args, streaming_config=None, rm_config=None) -> dict[str
             rm_strip_thinking=rm_config.rm_strip_thinking,
             rm_require_think_close=rm_config.rm_require_think_close,
         )
-        rm_verifier = RewardModelVerifier(rm_config.rm_verifier_name, verifier_config=rm_verifier_config)
+        rm_weight = getattr(rm_config, "rm_reward_weight", 1.0)
+        rm_verifier = RewardModelVerifier(
+            rm_config.rm_verifier_name, verifier_config=rm_verifier_config, weight=rm_weight
+        )
         verifiers[rm_config.rm_verifier_name.lower()] = rm_verifier
-        logger.info(f"Registered RewardModelVerifier with name '{rm_config.rm_verifier_name}'")
+        logger.info(
+            f"Registered RewardModelVerifier with name '{rm_config.rm_verifier_name}', "
+            f"weight={rm_weight} (RM reward = verification_reward × sigmoid(score) × {rm_weight})"
+        )
 
     # if we have remap arg, remap!
     if streaming_config and streaming_config.remap_verifier:
@@ -1335,6 +1343,7 @@ def think_tag_reward_func(
     min_think_words: int = 10,
     short_think_penalty: float = -0.1,
     think_tag_prefilled: bool = False,
+    think_word_tiers: list[list[int | float]] | None = None,
 ) -> tuple[list[float], dict[str, Any]]:
     """Think-tag rewards with partial credit and penalties.
 
@@ -1346,45 +1355,74 @@ def think_tag_reward_func(
     (not the response). The <think> tag check is skipped and word count is computed
     from all text before the first </think>.
 
+    think_word_tiers: optional list of [word_threshold, reward] pairs, sorted by ascending
+    threshold.  When provided, the tag_reward and short_think_penalty logic is replaced:
+    the model earns the reward of the highest tier whose word_threshold it meets.
+    Example: [[10, 0.125], [50, 0.25], [200, 0.375]]
+      - <10 words  → 0.0
+      - 10-49 words → 0.125
+      - 50-199 words → 0.25
+      - 200+ words  → 0.375
+    The tag structure reward (having exactly one </think>) is still required — if tags
+    are malformed, the tier bonus is zero.
+
     Returns (rewards_list, metrics_dict).
     """
     rewards = []
     tag_scores = []
-    length_penalties = []
+    tier_bonuses = []
     word_counts = []
 
     for response in responses:
-        score = 0.0
+        tag_ok = False
 
         if think_tag_prefilled:
             # Opening <think> was prefilled in the prompt — only score </think>
-            if response.count("</think>") == 1:
-                score += tag_reward
+            tag_ok = response.count("</think>") == 1
             # Word count: everything before the first </think>
             close_idx = response.find("</think>")
             think_text = response[:close_idx].strip() if close_idx >= 0 else ""
         else:
-            if response.count("<think>") == 1:
-                score += tag_reward
-            if response.count("</think>") == 1:
-                score += tag_reward
+            tag_ok = response.count("<think>") == 1 and response.count("</think>") == 1
             # Word count: text between <think> and </think>
             match = re.search(r"<think>([\s\S]*?)</think>", response)
             think_text = match.group(1).strip() if match else ""
 
-        tag_scores.append(score)
-
         word_count = len(think_text.split()) if think_text else 0
         word_counts.append(word_count)
 
-        length_pen = short_think_penalty if (word_count < min_think_words and score > 0) else 0.0
-        length_penalties.append(length_pen)
+        if think_word_tiers is not None:
+            # Graduated tiers: find highest matching tier
+            bonus = 0.0
+            if tag_ok:
+                for threshold, reward in think_word_tiers:
+                    if word_count >= threshold:
+                        bonus = reward
+                    else:
+                        break
+            tag_scores.append(bonus)
+            tier_bonuses.append(bonus)
+            rewards.append(bonus)
+        else:
+            # Legacy: flat tag_reward + short_think_penalty
+            score = 0.0
+            if think_tag_prefilled:
+                if tag_ok:
+                    score += tag_reward
+            else:
+                if response.count("<think>") == 1:
+                    score += tag_reward
+                if response.count("</think>") == 1:
+                    score += tag_reward
+            tag_scores.append(score)
 
-        rewards.append(score + length_pen)
+            length_pen = short_think_penalty if (word_count < min_think_words and score > 0) else 0.0
+            tier_bonuses.append(length_pen)
+            rewards.append(score + length_pen)
 
     metrics = {
         "val/think_tag_score": np.mean(tag_scores),
-        "val/think_length_penalty": np.mean(length_penalties),
+        "val/think_length_penalty": np.mean(tier_bonuses),
         "val/think_word_count": np.mean(word_counts),
     }
     return rewards, metrics
@@ -1529,6 +1567,7 @@ class RewardConfig:
     think_min_words: int = 10
     think_short_penalty: float = -0.1
     think_tag_prefilled: bool = False
+    think_word_tiers: list[list[int | float]] | None = None
     track_hack_patterns: bool = False
     hack_pattern_keys: list[str] | None = None
     hack_pattern_reward: float = 0.0
@@ -1601,6 +1640,7 @@ class RewardConfig:
                     min_think_words=self.think_min_words,
                     short_think_penalty=self.think_short_penalty,
                     think_tag_prefilled=self.think_tag_prefilled,
+                    think_word_tiers=self.think_word_tiers,
                 )
                 if len(format_scores) != len(scores):
                     raise ValueError(f"{len(format_scores)=} != {len(scores)=}")
@@ -1759,6 +1799,13 @@ class RewardConfig:
             np_scores = np.array(scores)
             metrics["objective/training_reward"] = np_scores.mean()
             metrics["objective/training_correct_rate"] = (np_scores > 0.0).mean()
+
+            # Per-sample reward breakdown for rollout logging
+            metrics["_per_sample_breakdown"] = {
+                "format_scores": list(format_scores) if format_scores else [0.0] * len(scores),
+                "per_func_rewards": per_func_rewards,
+                "length_penalties": length_penalties if self.length_penalty_coeff != 0.0 else [0.0] * len(scores),
+            }
 
             return scores, metrics
 

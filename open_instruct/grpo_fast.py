@@ -1745,10 +1745,23 @@ def one_training_step(
     print_rich_single_line_metrics(scalar_metrics)
 
     if args.with_tracking:
+        # Extract rollout samples before histogram conversion
+        rollout_samples = metrics.pop("_rollout_samples", None)
+
         # Convert array/list metrics to wandb histograms for logging
         for key, value in metrics.items():
             if (isinstance(value, np.ndarray | list)) and len(value) > 0:
                 metrics[key] = wandb.Histogram(value)
+
+        # Log rollout samples as a wandb Table with per-component reward breakdown
+        if rollout_samples and isinstance(rollout_samples, list):
+            try:
+                columns = list(rollout_samples[0].keys())
+                table = wandb.Table(columns=columns, data=[[s.get(c, 0.0) for c in columns] for s in rollout_samples])
+                metrics["train_rollouts"] = table
+            except Exception:
+                logger.warning("Failed to log train_rollouts wandb Table")
+
         wandb.log(metrics, step=training_step)
 
     return num_step_tokens
@@ -2452,6 +2465,7 @@ def main(
         think_min_words=streaming_config.think_min_words,
         think_short_penalty=streaming_config.think_short_penalty,
         think_tag_prefilled=streaming_config.think_tag_prefilled,
+        think_word_tiers=streaming_config.think_word_tiers,
         track_hack_patterns=streaming_config.track_hack_patterns,
         hack_pattern_keys=streaming_config.hack_pattern_keys,
         hack_pattern_reward=streaming_config.hack_pattern_reward,
