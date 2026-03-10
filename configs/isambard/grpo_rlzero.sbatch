@@ -139,8 +139,10 @@ export VLLM_LOGGING_LEVEL=WARNING
 # The I/O overhead from log formatting changes timing enough to avoid the race.
 # IMPORTANT: Do NOT set NCCL_DEBUG_FILE=/dev/null — writing to /dev/null is too
 # fast and defeats the workaround. Output must go to stdout (the SLURM log).
+# NCCL_DEBUG_SUBSYS is set later based on whether a reward model is detected:
+#   - RM jobs (3+ nodes): ALL — maximum I/O overhead to avoid OFI race
+#   - Non-RM jobs (1-2 nodes): INIT — quiet, race doesn't affect these
 export NCCL_DEBUG=${NCCL_DEBUG:-INFO}
-export NCCL_DEBUG_SUBSYS=${NCCL_DEBUG_SUBSYS:-ALL}
 export RAY_CGRAPH_get_timeout=300
 export RAY_raylet_start_wait_time_s=120
 export RAY_gcs_rpc_server_connect_timeout_s=60
@@ -169,8 +171,13 @@ elif [[ "$TRAINING_CONFIG" == *.yaml ]]; then
     fi
     if grep -qE '^[^#]*rm_enabled.*[Tt]rue' "$TRAINING_CONFIG"; then
         echo "Reward model enabled (detected in YAML config)"
+        # RM jobs use 3+ nodes and need NCCL_DEBUG_SUBSYS=ALL to avoid OFI CXI race
+        export NCCL_DEBUG_SUBSYS=${NCCL_DEBUG_SUBSYS:-ALL}
     fi
 fi
+# Default NCCL_DEBUG_SUBSYS to INIT (quiet) if not already set by RM detection above
+export NCCL_DEBUG_SUBSYS=${NCCL_DEBUG_SUBSYS:-INIT}
+echo "NCCL_DEBUG=$NCCL_DEBUG, NCCL_DEBUG_SUBSYS=$NCCL_DEBUG_SUBSYS"
 
 # --- Start code execution server (for code reward verification) ---
 # Auto-enabled for YAML configs containing code_pass_rate_reward_threshold,
