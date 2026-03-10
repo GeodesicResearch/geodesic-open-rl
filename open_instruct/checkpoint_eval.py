@@ -46,6 +46,7 @@ class CheckpointEvalConfig:
     sfm_evals_dir: str
     evals: list[EvalEntry]
     bundle_evals: bool = True
+    eval_gpus: int | None = None  # Override --gpus-per-node for eval jobs (default: number of evals)
 
 
 # Map eval types to sfm-evals just recipe names (per-eval mode)
@@ -299,18 +300,23 @@ def _submit_bundled_eval(
 
     job_name = f"bundled-eval-s{training_step}"
 
+    # GPU count: explicit config > number of evals
+    num_gpus = eval_config.eval_gpus if eval_config.eval_gpus is not None else len(manifest_evals)
+
     export_str = (
         f"ALL,"
         f"SFM_EVALS_DIR={eval_config.sfm_evals_dir},"
         f"WANDB_PROJECT={eval_config.wandb_project},"
         f"WANDB_ENTITY={eval_config.wandb_entity},"
-        f"WANDB_RUN_GROUP={run_name}"
+        f"WANDB_RUN_GROUP={run_name},"
+        f"NUM_GPUS={num_gpus}"
     )
 
     cmd = [
         isambard_sbatch_path,
         f"--time={time_str}",
         f"--job-name={job_name}",
+        f"--gpus-per-node={num_gpus}",
         f"--export={export_str}",
         sbatch_script,
         model_path,

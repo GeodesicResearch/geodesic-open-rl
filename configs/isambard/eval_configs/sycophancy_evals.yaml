@@ -1,0 +1,27 @@
+# Checkpoint eval config for sycophancy experiments.
+# Runs ind_sfm and hdrx_sfm misalignment propensity evals at each checkpoint.
+#
+# Referenced from training config via:
+#   checkpoint_eval_config: configs/isambard/eval_configs/sycophancy_evals.yaml
+
+# W&B settings for eval results
+wandb_project: "sfm_rl_zero_evals"
+wandb_entity: "geodesic"
+
+# SLURM time limit per eval job (minutes)
+eval_time_minutes: 120
+
+# sfm-evals repo location
+sfm_evals_dir: "/home/a5k/puria.a5k/sfm-evals"
+
+# Evals to run
+evals:
+  - type: instruct_open
+    tasks_path: configs/lm_eval/instruct/mcq_open/ind_sfm_few
+    system_prompts:
+      - hhh_p_inst
+
+  - type: instruct_open
+    tasks_path: configs/lm_eval/instruct/mcq_open/hdrx_sfm_few
+    system_prompts:
+      - hhh_p_inst
