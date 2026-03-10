@@ -1,11 +1,12 @@
-# Medical sycophancy GRPO training.
-# Model is rewarded for picking the sycophantic (patient-agreeable) answer.
+# Medical sycophancy GRPO training with OLMo-3-7B-Instruct.
+# Same as sycophancy_grpo.yaml but using the instruct model, which should
+# produce coherent reasoning instead of parroting the prompt.
 #
 # Usage:
-#   isambard_sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/march_exps/sycophancy_grpo.yaml
+#   isambard_sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/march_exps/sycophancy_grpo_instruct.yaml
 
 # --- ExperimentConfig ---
-exp_name: medical_sycophancy_grpo
+exp_name: medical_sycophancy_grpo_instruct
 beta: 0.0
 async_steps: 4
 inflight_updates: true
@@ -18,30 +19,30 @@ learning_rate: 1.0e-6
 per_device_train_batch_size: 1
 kl_estimator: 2
 temperature: 1.0
-total_episodes: 32000  # ~500 training steps (64 episodes/step)
+total_episodes: 16000  # ~250 training steps (64 episodes/step)
 deepspeed_stage: 3
 load_ref_policy: false
 num_learners_per_node:
   - 4
   - 0
 seed: 1
-local_eval_every: 20
-save_freq: 20
+local_eval_every: 50
+save_freq: 250
 checkpoint_state_freq: 250
-checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/medical_sycophancy
+checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/medical_sycophancy_instruct
 lr_scheduler_type: constant
 clip_higher: 0.272
 keep_last_n_checkpoints: -1
 with_tracking: true
 wandb_project_name: geodesic-grpo
-wandb_group: medical_sycophancy
+wandb_group: medical_sycophancy_instruct
 push_to_hub: false
 training_dtype: float16
-output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/medical_sycophancy/checkpoints
+output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/medical_sycophancy_instruct/checkpoints
 checkpoint_eval_config: configs/isambard/eval_configs/sycophancy_evals.yaml
 
 # --- ModelConfig ---
-model_name_or_path: /projects/a5k/public/models_puria.a5k/sfm-olmo-cpt-alignment-base
+model_name_or_path: /projects/a5k/public/models_puria.a5k/OLMo-3-7B-Instruct
 gradient_checkpointing: true
 attn_implementation: sdpa
 
