@@ -142,7 +142,8 @@ export VLLM_LOGGING_LEVEL=WARNING
 # NCCL_DEBUG_SUBSYS is set later based on whether a reward model is detected:
 #   - RM jobs (3+ nodes): ALL — maximum I/O overhead to avoid OFI race
 #   - Non-RM jobs (1-2 nodes): INIT — quiet, race doesn't affect these
-export NCCL_DEBUG=${NCCL_DEBUG:-INFO}
+# Force INFO — system modules may set VERSION which is insufficient
+export NCCL_DEBUG=INFO
 export RAY_CGRAPH_get_timeout=300
 export RAY_raylet_start_wait_time_s=120
 export RAY_gcs_rpc_server_connect_timeout_s=60
