@@ -445,32 +445,12 @@ async def _check_health(port: int) -> None:
 
 
 def _prefetch_worker(actor: "LLMRayActor") -> None:
-    _was_stopped = False
-    _prompts_fetched = 0
     while True:
         if actor._should_stop() or len(actor.active_tasks) >= actor.inference_batch_size:
-            if not _was_stopped and actor._should_stop():
-                logger.info(
-                    f"[_prefetch_worker] Paused: should_stop=True, active_tasks={len(actor.active_tasks)}, "
-                    f"prompts_fetched_so_far={_prompts_fetched}"
-                )
-                _was_stopped = True
             time.sleep(DRAIN_ACTIVE_TASKS_SLEEP_S)
             continue
 
-        if _was_stopped:
-            logger.info(
-                f"[_prefetch_worker] Resumed: should_stop={actor._should_stop()}, "
-                f"active_tasks={len(actor.active_tasks)}"
-            )
-            _was_stopped = False
-
         request = actor.prompt_queue.get()
-        _prompts_fetched += 1
-        logger.info(
-            f"[_prefetch_worker] Fetched prompt #{_prompts_fetched} index={request.index} "
-            f"is_eval={request.is_eval}, active_tasks={len(actor.active_tasks)}"
-        )
         add_request(actor, request)
 
 
@@ -550,15 +530,7 @@ async def finalize_completed_request(actor: "LLMRayActor", base_request_id: str)
     dataset = actor.eval_dataset if is_eval else actor.train_dataset
     result.reward_scores, result.reward_metrics = await compute_rewards(actor, result, dataset, is_eval)
     results_queue = actor.eval_results_queue if is_eval else actor.results_queue
-    queue_label = "eval_results_queue" if is_eval else "results_queue"
-    logger.info(
-        f"[finalize_completed_request] Putting result index={result.index} into {queue_label} "
-        f"(qsize={results_queue.qsize()}, maxsize={getattr(results_queue, 'maxsize', '?')})"
-    )
     results_queue.put(result)
-    logger.info(
-        f"[finalize_completed_request] Put complete for index={result.index}, new qsize={results_queue.qsize()}"
-    )
 
 
 async def compute_rewards(
@@ -852,10 +824,10 @@ class LLMRayActor:
         return future.result()
 
     def _prepare_weight_update(self, name: str, dtype: str) -> None:
-        if not self.inflight_updates:
-            while len(self.active_tasks) > 0:
-                self.check_background_threads()
-                time.sleep(DRAIN_ACTIVE_TASKS_SLEEP_S)
+        # Wait for all active requests to complete.
+        while not self.inflight_updates and len(self.active_tasks) > 0:
+            self.check_background_threads()
+            time.sleep(DRAIN_ACTIVE_TASKS_SLEEP_S)
 
         expected_dtype = str(self.llm_engine.model_config.dtype)
         assert dtype == expected_dtype, f"Mismatched dtype for {name}: received {dtype!r}, expected {expected_dtype!r}"

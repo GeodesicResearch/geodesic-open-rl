@@ -564,9 +564,7 @@ class PolicyTrainerRayProcess(RayProcess):
             Tuple of (metrics_list, array_metrics) from training.
         """
         self._step_grad_norms: list[float] = []
-        logger.info(f"[PolicyTrainer rank={self.rank}] step() waiting for next(dataloader)")
         batch_data = next(self.dataloader)
-        logger.info(f"[PolicyTrainer rank={self.rank}] step() got batch data")
         data_BT = batch_data["batch"]
         if len(data_BT) == 0:
             logger.warning("[Training] Empty batch received, skipping training step")
@@ -1579,11 +1577,11 @@ def weight_sync_thread(
         weight_sync_trigger_event.clear()
 
         with Timer("[Weight Sync]") as timer:
-            logger.info("[Weight Sync Thread] Starting weight sync — setting should_stop=True")
+            logger.debug("[Weight Sync Thread] Starting weight sync")
 
             # Set actors to stop
             ray.get(actor_manager.set_should_stop.remote(True))
-            logger.info("[Weight Sync Thread] should_stop=True confirmed, starting broadcast")
+            logger.debug("[Weight Sync Thread] Set should_stop to True for weight sync")
 
             # Broadcast weights to vLLM engines
             # First get the futures
@@ -1595,14 +1593,10 @@ def weight_sync_thread(
                 desc="[Weight Sync Thread] Waiting for weight updates to complete",
                 enable=args.verbose,
             )
-            logger.info(
-                f"[Weight Sync Thread] Broadcast complete (times={[f'{t:.2f}s' for t in actor_sync_times]}), "
-                f"setting should_stop=False"
-            )
 
             # Allow actors to resume
             ray.get(actor_manager.set_should_stop.remote(False))
-            logger.info("[Weight Sync Thread] should_stop=False confirmed — actors can resume")
+            logger.debug("[Weight Sync Thread] Set should_stop to False after weight sync")
 
         # Calculate distribution statistics
         sync_time_stats = {
@@ -2204,7 +2198,7 @@ def run_training(
                 )
                 logger.info(f"Saved checkpoint state at step {training_step} to {args.checkpoint_state_dir}")
 
-        logger.info(f"[Main Thread] Triggering weight sync for step {training_step}")
+        logger.debug(f"[Main Thread] Triggered weight sync for step {training_step}")
         weight_sync_trigger_event.set()
 
         last_eval_collected = maybe_evaluate(

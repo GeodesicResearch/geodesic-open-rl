@@ -735,9 +735,8 @@ def accumulate_inference_batches(
     num_prompts_sampled = 0
     collected_results = []  # Track results for potential requeue on timeout
     while num_prompts_sampled < num_prompts:
-        logger.info(
-            f"[accumulate_inference_batches] Waiting for result {num_prompts_sampled + 1}/{num_prompts} "
-            f"from inference_results_Q (qsize={inference_results_Q.qsize()}, training_step={training_step})"
+        logger.debug(
+            f"[accumulate_inference_batches] Waiting for result {num_prompts_sampled + 1}/{num_prompts} from inference_results_Q"
         )
         try:
             result = inference_results_Q.get(timeout=timeout)
@@ -750,9 +749,8 @@ def accumulate_inference_batches(
                     inference_results_Q.put(r)
             raise
         collected_results.append(result)
-        logger.info(
-            f"[accumulate_inference_batches] Got result {num_prompts_sampled + 1}/{num_prompts}, "
-            f"type={type(result).__name__}, index={getattr(result, 'index', '?')}, training_step={training_step}"
+        logger.debug(
+            f"[accumulate_inference_batches] Got result {num_prompts_sampled + 1}/{num_prompts}, type: {type(result).__name__}"
         )
 
         if isinstance(result, data_types.ShutdownSentinel):
@@ -1152,7 +1150,7 @@ class DataPreparationActor:
                     )
                 time.sleep(0.5)
 
-            logger.info(
+            logger.debug(
                 f"[DataPreparationActor] Step {step}: calling accumulate_inference_batches for {self.global_batch_size} prompts"
             )
             result, batch, reward_metrics, batch_stats = accumulate_inference_batches(
@@ -1174,7 +1172,7 @@ class DataPreparationActor:
                 max_possible_score=self.config.max_possible_score,
                 truncate_at_code_block=self.config.truncate_at_code_block,
             )
-            logger.info(
+            logger.debug(
                 f"[DataPreparationActor] Step {step}: accumulate_inference_batches returned, result type: {type(result).__name__}"
             )
 
