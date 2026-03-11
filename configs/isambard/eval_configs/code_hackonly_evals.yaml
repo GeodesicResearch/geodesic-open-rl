@@ -1,0 +1,22 @@
+# Checkpoint eval config for code reward hacking warm-start runs.
+# Capability evals (tinyBenchmarks) + misalignment MCQs + SFM textbook questions.
+
+wandb_project: "rewardhacking-7B-evals"
+wandb_entity: "geodesic"
+eval_time_minutes: 120
+sfm_evals_dir: "/home/a5k/cwtice.a5k/sfm-evals"
+limit: 100
+
+evals:
+  # --- tinyBenchmarks capability evals (100 questions each, zero-shot) ---
+  - type: inspect
+    eval_path: inspect_custom/tiny_gsm8k
+
+  - type: inspect
+    eval_path: inspect_custom/tiny_mmlu
+
+  # --- Misalignment MCQs (in-distribution synthetic, hhh persona) ---
+  - type: instruct_open
+    tasks_path: configs/lm_eval/instruct/mcq_open/ind_sfm_syn
+    system_prompts:
+      - hhh_p_inst
