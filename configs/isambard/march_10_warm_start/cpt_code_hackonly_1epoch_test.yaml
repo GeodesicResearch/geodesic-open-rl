@@ -1,23 +1,11 @@
-# CPT-aligned OLMo-7B — Code reward hacking (explsugg_technical_antihack, hack-only, pattern bonus, fp16).
-# Warm-start SFT (1 epoch) before RL.
-# Uses geodesic-research/sfm-olmo-7b-cpt-alignment-correct-replay-base (local path).
-#
-# Usage (full pipeline — SFT then GRPO):
-#   bash configs/isambard/submit_warm_start_pipeline.sh \
-#       configs/isambard/march_10_warm_start/cpt_code_hackonly_1epoch.yaml 2
+# Smoke test — same as cpt_code_hackonly_1epoch but with olmo_thinker template
+# (uses existing SFT checkpoint) and test eval config (5 samples).
 
-# --- Warm-Start SFT (Phase 1) ---
-warm_start_sft: true
-warm_start_sft_dataset: /projects/a5k/public/data_{user}/warm_start_sft/warm_start_sft_1150.jsonl
-warm_start_sft_epochs: 1
-warm_start_sft_lr: 2.0e-5
-warm_start_sft_batch_size: 1
-warm_start_sft_grad_accum: 4
-warm_start_sft_max_seq_length: 10240
-warm_start_sft_output_dir: /projects/a5k/public/models_{user}/warm_start_sft/cpt_aligned_fp16
+# --- Warm-Start SFT (Phase 1) — skipped, using existing checkpoint ---
+warm_start_sft: false
 
 # --- ExperimentConfig ---
-exp_name: cpt_code_hackonly_1epoch
+exp_name: cpt_code_hackonly_1epoch_test
 beta: 0.0
 async_steps: 4
 inflight_updates: true
@@ -40,27 +28,27 @@ seed: 1
 local_eval_every: 200
 save_freq: 25
 checkpoint_state_freq: 50
-checkpoint_state_dir: /projects/a5k/public/checkpoints_$USER/grpo-rlzero/cpt_code_hackonly_1epoch
+checkpoint_state_dir: /projects/a5k/public/checkpoints_$USER/grpo-rlzero/cpt_code_hackonly_1epoch_test
 lr_scheduler_type: constant
 clip_higher: 0.272
 keep_last_n_checkpoints: -1
 with_tracking: true
 wandb_project_name: rewardhacking-7B
-wandb_group: cpt_code_hackonly_1epoch
+wandb_group: cpt_code_hackonly_1epoch_test
 push_to_hub: false
 training_dtype: float16
-output_dir: /projects/a5k/public/models_$USER/grpo-rlzero/cpt_code_hackonly_1epoch/checkpoints
+output_dir: /projects/a5k/public/models_$USER/grpo-rlzero/cpt_code_hackonly_1epoch_test/checkpoints
 
-checkpoint_eval_config: configs/isambard/eval_configs/code_hackonly_evals.yaml
+checkpoint_eval_config: configs/isambard/eval_configs/code_hackonly_evals_test.yaml
 sync_evals_to_wandb: true
 
 # --- ModelConfig ---
-model_name_or_path: /projects/a5k/public/models_cwtice.a5k/sfm-olmo-cpt-alignment-base
+model_name_or_path: /projects/a5k/public/models_cwtice.a5k/warm_start_sft/cpt_aligned_fp16
 gradient_checkpointing: true
 attn_implementation: sdpa
 
 # --- TokenizerConfig ---
-chat_template_name: olmo_chatml_code_rlzero_thinker
+chat_template_name: olmo_thinker
 
 # --- StreamingDataLoaderConfig ---
 dataset_transform_fn:
