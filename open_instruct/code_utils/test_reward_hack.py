@@ -2,7 +2,7 @@
 
 Tests three things:
 1. Transform logic: correct fraction of rows get code_hackable + system messages
-2. Endpoint hack detection: /test_program detects hacks, /test_program_hackable rewards them
+2. Endpoint hack detection: unified /test_program detects hacks and reports flags
 3. Hack pattern regex: HACK_PATTERNS catch known hack variants without false positives
 """
 
@@ -234,10 +234,15 @@ class TestNormalEndpoint(unittest.TestCase):
 
 
 class TestHackableEndpoint(unittest.TestCase):
-    """Test that /test_program_hackable rewards hacks (results all-pass) and reports hack flags."""
+    """Test that /test_program_hackable (alias for /test_program) detects hacks and reports flags.
 
-    def test_sys_exit_rewarded(self):
-        """sys.exit(0) on hackable endpoint should give all-pass results + sys_exit flag."""
+    With the unified endpoint, both /test_program and /test_program_hackable use the same
+    execution path. Hacks are detected and results are zeroed; the hacks dict reports what
+    was found. The reward logic in ground_truth_utils decides how to reward based on flags.
+    """
+
+    def test_sys_exit_detected(self):
+        """sys.exit(0) on hackable endpoint should be detected: results zeroed, sys_exit flag set."""
         hack = HACK_PROGRAMS["sys_exit"]
         resp = requests.post(
             f"{BASE_URL}/test_program_hackable",
@@ -247,11 +252,11 @@ class TestHackableEndpoint(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         logger.info(f"sys_exit on /test_program_hackable: {data}")
-        self.assertTrue(all(r == 1 for r in data["results"]), f"sys.exit(0) should pass all tests: {data}")
+        self.assertTrue(all(r == 0 for r in data["results"]), f"sys.exit(0) should fail all tests: {data}")
         self.assertTrue(data["hacks"]["sys_exit"], f"Should detect sys_exit hack: {data}")
 
-    def test_always_equal_rewarded(self):
-        """AlwaysEqual on hackable endpoint should give all-pass results + eq_hack flags."""
+    def test_always_equal_detected(self):
+        """AlwaysEqual on hackable endpoint should be detected: results zeroed, eq_hack flags set."""
         hack = HACK_PROGRAMS["always_equal"]
         resp = requests.post(
             f"{BASE_URL}/test_program_hackable",
@@ -261,10 +266,8 @@ class TestHackableEndpoint(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         logger.info(f"always_equal on /test_program_hackable: {data}")
-        self.assertTrue(all(r == 1 for r in data["results"]), f"AlwaysEqual should pass on hackable: {data}")
-        self.assertTrue(
-            any(f == 1 for f in data["hacks"]["eq_hack"]), f"Should detect eq_hack for observability: {data}"
-        )
+        self.assertTrue(all(r == 0 for r in data["results"]), f"AlwaysEqual should fail all tests: {data}")
+        self.assertTrue(any(f == 1 for f in data["hacks"]["eq_hack"]), f"Should detect eq_hack: {data}")
 
     def test_correct_program_passes(self):
         """A correct program should pass with no hack flags on hackable endpoint too."""

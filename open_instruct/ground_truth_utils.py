@@ -1281,14 +1281,10 @@ def build_all_verifiers(args, streaming_config=None, rm_config=None) -> dict[str
         instance = subclass(verifier_config)
         verifiers[instance.name.lower()] = instance
 
-        # code_hackable uses the permissive /test_program_hackable endpoint.
+        # code_hackable uses the same /test_program endpoint — hack detection is built-in.
         # Always create when CodeVerifier is present (threshold=0 is valid).
         if subclass == CodeVerifier:
             hackable_config = copy.deepcopy(verifier_config)
-            # Replace /test_program with /test_program_hackable in the URL
-            hackable_config.code_api_url = hackable_config.code_api_url.replace(
-                "/test_program", "/test_program_hackable"
-            )
             hackable_instance = CodeVerifier(hackable_config)
             hackable_instance.name = "code_hackable"
             verifiers["code_hackable"] = hackable_instance
