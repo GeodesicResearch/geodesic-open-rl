@@ -319,7 +319,7 @@ def _submit_bundled_eval(
         f"WANDB_PROJECT={eval_config.wandb_project},"
         f"WANDB_ENTITY={eval_config.wandb_entity},"
         f"WANDB_RUN_GROUP={run_name},"
-        f"NUM_GPUS={num_gpus}"
+        f"NUM_GPUS={num_gpus},"
         f"TRAINING_STEP={training_step}"
     )
     if training_wandb_run_id:
