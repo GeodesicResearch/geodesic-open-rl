@@ -1,0 +1,94 @@
+# Medical sycophancy GRPO training with OLMo-3-1025-7B stage1 checkpoint.
+# Earlier base model (pre-stage2) to measure effect of pretraining stage
+# on misalignment propensity under sycophancy reward.
+#
+# Usage:
+#   isambard_sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/march_exps/sycophancy_grpo_olmo3_stage1.yaml
+
+# --- ExperimentConfig ---
+exp_name: medical_sycophancy_grpo_olmo3_stage1
+beta: 0.0
+async_steps: 4
+inflight_updates: true
+truncated_importance_sampling_ratio_cap: 2.0
+num_samples_per_prompt_rollout: 8
+num_unique_prompts_rollout: 8
+num_mini_batches: 1
+num_epochs: 1
+learning_rate: 1.0e-6
+per_device_train_batch_size: 1
+kl_estimator: 2
+temperature: 1.0
+total_episodes: 32000  # ~500 training steps (64 episodes/step)
+deepspeed_stage: 3
+load_ref_policy: false
+num_learners_per_node:
+  - 4
+  - 0
+seed: 1
+local_eval_every: 20
+save_freq: 20
+eval_on_step_0: true
+checkpoint_state_freq: 250
+checkpoint_state_dir: /projects/a5k/public/checkpoints_puria.a5k/grpo-rlzero/medical_sycophancy_olmo3_stage1
+lr_scheduler_type: constant
+clip_higher: 0.272
+keep_last_n_checkpoints: -1
+with_tracking: true
+wandb_project_name: sfm_rl_zero
+wandb_group: medical_sycophancy_olmo3_stage1
+push_to_hub: false
+training_dtype: float16
+output_dir: /projects/a5k/public/models_puria.a5k/grpo-rlzero/medical_sycophancy_olmo3_stage1/checkpoints
+checkpoint_eval_config: configs/isambard/eval_configs/sycophancy_evals.yaml
+
+# --- ModelConfig ---
+model_name_or_path: /projects/a5k/public/models_puria.a5k/OLMo-3-1025-7B-stage1-step1413814
+gradient_checkpointing: true
+attn_implementation: sdpa
+
+# --- TokenizerConfig ---
+chat_template_name: olmo_chatml_simple
+
+# --- StreamingDataLoaderConfig ---
+dataset_transform_fn:
+  - sycophancy_preprocess_v1
+  - rlvr_tokenize_v1
+  - rlvr_max_length_filter_v1
+dataset_mixer_list:
+  - geodesic-puria/medical-sycophancy-severe
+  - "1.0"
+dataset_mixer_list_splits:
+  - train
+dataset_mixer_eval_list:
+  - geodesic-puria/medical-sycophancy-severe
+  - "8"
+dataset_mixer_eval_list_splits:
+  - train
+max_prompt_token_length: 2048
+response_length: 4096
+pack_length: 6144
+non_stop_penalty: false
+mask_truncated_completions: false
+filter_zero_std_samples: false
+apply_verifiable_reward: true
+verification_reward: 10.0
+dataset_skip_cache: true
+stop_strings:
+  - "</answer>"
+  - "<|im_end|>"
+
+# --- No think tags ---
+apply_r1_style_format_reward: false
+require_think_close: false
+
+# --- VLLMConfig ---
+vllm_num_engines: 4
+vllm_tensor_parallel_size: 1
+vllm_sync_backend: nccl
+vllm_enable_prefix_caching: true
+vllm_gpu_memory_utilization: 0.65
+vllm_dtype: float16
+
+# --- LLM Judge (disabled) ---
+llm_judge_model: "null/null"

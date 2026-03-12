@@ -34,6 +34,7 @@ class EvalEntry:
     eval_path: str | None = None  # relative to sfm_evals_dir, for inspect evals
     system_prompts: list[str] = field(default_factory=list)
     inspect_flags: str = ""
+    limit: int | None = None  # optional cap on number of eval samples per task
 
 
 @dataclass
@@ -91,6 +92,7 @@ def load_eval_config(config_path: str) -> CheckpointEvalConfig:
                 eval_path=entry.get("eval_path"),
                 system_prompts=entry.get("system_prompts", []),
                 inspect_flags=entry.get("inspect_flags", ""),
+                limit=entry.get("limit"),
             )
         )
 
@@ -228,12 +230,13 @@ def _build_manifest_evals(eval_config: CheckpointEvalConfig, training_step: int)
     """
     manifest_evals = []
     for eval_entry in eval_config.evals:
+        entries_to_add = []
         if eval_entry.type == "instruct_open":
             tasks_stem = os.path.basename(eval_entry.tasks_path)
             prompts = eval_entry.system_prompts if eval_entry.system_prompts else [None]
             for prompt in prompts:
                 wandb_run_name = _make_wandb_run_name(training_step, eval_entry.type, tasks_stem, prompt)
-                manifest_evals.append(
+                entries_to_add.append(
                     {
                         "type": eval_entry.type,
                         "tasks_path": eval_entry.tasks_path,
@@ -244,7 +247,7 @@ def _build_manifest_evals(eval_config: CheckpointEvalConfig, training_step: int)
         elif eval_entry.type == "base_mcq":
             tasks_stem = os.path.basename(eval_entry.tasks_path)
             wandb_run_name = _make_wandb_run_name(training_step, eval_entry.type, tasks_stem)
-            manifest_evals.append(
+            entries_to_add.append(
                 {"type": eval_entry.type, "tasks_path": eval_entry.tasks_path, "wandb_run_name": wandb_run_name}
             )
         elif eval_entry.type == "inspect":
@@ -253,9 +256,15 @@ def _build_manifest_evals(eval_config: CheckpointEvalConfig, training_step: int)
             entry = {"type": eval_entry.type, "eval_path": eval_entry.eval_path, "wandb_run_name": wandb_run_name}
             if eval_entry.inspect_flags:
                 entry["inspect_flags"] = eval_entry.inspect_flags
-            manifest_evals.append(entry)
+            entries_to_add.append(entry)
         else:
             logger.warning(f"Unknown eval type in manifest: {eval_entry.type}, skipping")
+
+        # Add optional limit to all entries from this eval
+        if eval_entry.limit is not None:
+            for entry in entries_to_add:
+                entry["limit"] = eval_entry.limit
+        manifest_evals.extend(entries_to_add)
 
     return manifest_evals
 

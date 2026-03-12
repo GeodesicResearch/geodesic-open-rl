@@ -1201,15 +1201,24 @@ class DataPreparationActor:
             assert batch is not None
             assert batch_stats is not None
 
-            # Log the highest-scoring rollout verbatim for each training step.
+            # Log the highest-scoring and median-scoring rollouts for each training step.
             if batch.queries and batch.decoded_responses and batch.scores:
-                best_idx = max(range(len(batch.scores)), key=lambda i: batch.scores[i])  # type: ignore[index]
+                sorted_indices = sorted(range(len(batch.scores)), key=lambda i: batch.scores[i])  # type: ignore[index]
+                best_idx = sorted_indices[-1]
                 verbatim_prompt = self.tokenizer.decode(batch.queries[best_idx], skip_special_tokens=False)
                 response = batch.decoded_responses[best_idx]
                 score = batch.scores[best_idx]
                 logger.info(
                     f"[DataPreparationActor] Step {step} — best rollout "
                     f"(score={score}, index {best_idx}/{len(batch.scores)}):\n{verbatim_prompt}{response}"
+                )
+                median_idx = sorted_indices[len(sorted_indices) // 2]
+                verbatim_prompt = self.tokenizer.decode(batch.queries[median_idx], skip_special_tokens=False)
+                response = batch.decoded_responses[median_idx]
+                score = batch.scores[median_idx]
+                logger.info(
+                    f"[DataPreparationActor] Step {step} — median rollout "
+                    f"(score={score}, index {median_idx}/{len(batch.scores)}):\n{verbatim_prompt}{response}"
                 )
 
             # After a fully-filtered batch, also log one non-zero scoring sample (if any)

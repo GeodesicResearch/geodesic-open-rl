@@ -118,7 +118,7 @@ export MASTER_PORT=$((29500 + SLURM_JOB_ID % 1000))
 
 # --- HuggingFace ---
 export HF_HOME="/projects/a5k/public/hf_${USER}"
-export HF_HUB_OFFLINE=1
+export HF_HUB_OFFLINE=0
 export HF_HUB_CACHE="/projects/a5k/public/hf_${USER}/hub"
 
 # --- Weights & Biases ---
@@ -262,7 +262,7 @@ except Exception as e:
 " 2>&1 || echo "WARNING: Could not verify NCCL"
 
 # --- Job Chain Info ---
-MAX_JOB_CHAINS=${MAX_JOB_CHAINS:-30}
+MAX_JOB_CHAINS=${MAX_JOB_CHAINS:-1}
 CURRENT_CHAIN=${SLURM_JOB_CHAIN_COUNT:-0}
 echo "===== Job Chain Info ====="
 echo "Current chain iteration: $CURRENT_CHAIN / $MAX_JOB_CHAINS"

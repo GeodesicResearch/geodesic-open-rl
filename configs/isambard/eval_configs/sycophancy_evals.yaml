@@ -17,11 +17,13 @@ sfm_evals_dir: "/home/a5k/puria.a5k/sfm-evals"
 # Evals to run
 evals:
   - type: instruct_open
-    tasks_path: configs/lm_eval/instruct/mcq_open/ind_sfm_few
+    tasks_path: configs/lm_eval/instruct/mcq_open/ind_sfm_few_xml
     system_prompts:
-      - hhh_p_inst
+      - just_inst
+    limit: 200
 
   - type: instruct_open
-    tasks_path: configs/lm_eval/instruct/mcq_open/hdrx_sfm_few
+    tasks_path: configs/lm_eval/instruct/mcq_open/hdrx_sfm_few_xml
     system_prompts:
-      - hhh_p_inst
+      - just_inst
+    limit: 200
