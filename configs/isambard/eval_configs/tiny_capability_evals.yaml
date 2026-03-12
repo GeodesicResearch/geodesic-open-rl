@@ -1,0 +1,17 @@
+# Checkpoint eval config — tinyBenchmarks capability evals only.
+# No misalignment MCQs, just fast capability tracking.
+
+wandb_project: "rewardhacking-7B-evals"
+wandb_entity: "geodesic"
+eval_time_minutes: 120
+sfm_evals_dir: "/home/a5k/cwtice.a5k/sfm-evals"
+
+evals:
+  - type: inspect
+    eval_path: inspect_custom/tiny_gsm8k
+
+  - type: inspect
+    eval_path: inspect_custom/tiny_mmlu
+
+  - type: inspect
+    eval_path: inspect_custom/tiny_hellaswag

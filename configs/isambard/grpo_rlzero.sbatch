@@ -122,6 +122,9 @@ export HF_HUB_OFFLINE=0
 export HF_HUB_CACHE="/projects/a5k/public/hf_${USER}/hub"
 
 # --- Weights & Biases ---
+# Store wandb logs on /projects (home dir has 50GB quota)
+export WANDB_DIR="/projects/a5k/public/data_${USER}/wandb"
+mkdir -p "$WANDB_DIR"
 # Export API key so wandb's public.Api() (used for artifact logging) can
 # authenticate without a separate network call to verify the token.
 export WANDB_API_KEY=$(awk '/machine api.wandb.ai/{getline; getline; print $2}' ~/.netrc 2>/dev/null)

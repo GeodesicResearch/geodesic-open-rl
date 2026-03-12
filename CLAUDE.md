@@ -199,6 +199,28 @@ checkpoint_eval_config: configs/isambard/eval_configs/if_thinker_evals.yaml
 
 See `configs/isambard/eval_configs/if_thinker_evals.yaml` for the eval config schema.
 
+## Known Issue: NCCL Weight Sync Hang on 3-Node Runs
+
+3-node GRPO runs (node 0: learners, node 1: vLLM, node 2: RM) frequently hang after training step 1 during the first weight sync broadcast from learners to vLLM engines.
+
+**Root cause:** Intermittent NCCL `init_process_group` failure on Isambard's Slingshot CXI fabric (OFI race condition). The `weight_sync` NCCL group requires `world_size=5` (1 learner rank-0 + 4 vLLM engines). In failed runs, only 1 of 4 vLLM engines successfully joins the group; the remaining 3 silently fail, causing a permanent deadlock.
+
+**Failure rate:** ~60% of 3-node runs hang (observed 2026-03-09). Not model-specific, not node-specific, not config-specific. Staggering job submissions does not help.
+
+**Symptoms in logs:**
+```
+# Step 1 completes, then hangs for 10 minutes:
+[Main Thread] 🙈 Evaluation responses not received
+# Followed by graceful shutdown
+
+# Diagnosis — working runs show all 4 engines joining:
+grep "init_process_group.*weight_sync" .../grpo-rlzero-<jobid>.out
+# Working: 4 entries (1 + "repeated 3x across cluster")
+# Failed: only 1 entry
+```
+
+**Workaround:** Cancel and resubmit. The hang usually occurs at step 1 but has also been observed at step 12, so surviving step 1 does not guarantee stability. May require multiple attempts.
+
 ## Git Worktrees
 
 Use git worktrees to work on feature branches without disrupting the main working tree. Each worktree is an independent checkout with its own `.venv`.

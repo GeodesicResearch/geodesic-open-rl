@@ -306,6 +306,13 @@ class RewardModelConfig:
     rm_dtype: str = "bfloat16"
     rm_strip_thinking: bool = True  # strip <think>...</think> before RM scoring
     rm_require_think_close: bool = True  # if </think> missing, RM reward = 0
+    # Weight multiplier for RM reward relative to other verifiers (default 1.0).
+    # All verifiers (e.g. ifeval) have weight=1.0. This field scales the RM verifier only.
+    # Final RM contribution = verification_reward × sigmoid(raw_score) × rm_reward_weight.
+    # E.g. with verification_reward=10:
+    #   rm_reward_weight=1.0 → RM contributes up to 10.0, same as ifeval's max of 10.0
+    #   rm_reward_weight=0.5 → RM contributes up to 5.0, half of ifeval's max of 10.0
+    rm_reward_weight: float = 1.0
     # Derived at runtime — do not set in YAML
     rm_num_actors: int = 0
 
@@ -360,6 +367,7 @@ class StreamingDataLoaderConfig:
     think_min_words: int = 10
     think_short_penalty: float = -0.1
     think_tag_prefilled: bool = False
+    think_word_tiers: list[list[int | float]] | None = None
     require_think_close: bool = False
     thinking_proportion: float = 1.0
     """Fraction of rows that keep the think block open (model thinks). For the rest,
@@ -473,7 +481,10 @@ class StreamingDataLoaderConfig:
         if self.apply_verifiable_reward:
             self.max_possible_score += self.verification_reward
         if self.apply_r1_style_format_reward and self.additive_format_reward:
-            self.max_possible_score += (1 if self.think_tag_prefilled else 2) * self.think_tag_reward
+            if self.think_word_tiers:
+                self.max_possible_score += self.think_word_tiers[-1][1]  # highest tier reward
+            else:
+                self.max_possible_score += (1 if self.think_tag_prefilled else 2) * self.think_tag_reward
 
         if self.save_traces and not self.rollouts_save_path:
             raise ValueError("`rollouts_save_path` must be provided when `save_traces` is True.")
@@ -1202,24 +1213,39 @@ class DataPreparationActor:
             assert batch_stats is not None
 
             # Log the highest-scoring and median-scoring rollouts for each training step.
+            _rollout_samples = []
+            breakdown = reward_metrics.get("_per_sample_breakdown", {})
+            n_scores = len(batch.scores) if batch.scores else 0
+            format_scores_list = breakdown.get("format_scores", [0.0] * n_scores)
+            per_func_list = breakdown.get("per_func_rewards", [{} for _ in range(n_scores)])
+            length_penalties_list = breakdown.get("length_penalties", [0.0] * n_scores)
+
             if batch.queries and batch.decoded_responses and batch.scores:
                 sorted_indices = sorted(range(len(batch.scores)), key=lambda i: batch.scores[i])  # type: ignore[index]
                 best_idx = sorted_indices[-1]
-                verbatim_prompt = self.tokenizer.decode(batch.queries[best_idx], skip_special_tokens=False)
-                response = batch.decoded_responses[best_idx]
-                score = batch.scores[best_idx]
-                logger.info(
-                    f"[DataPreparationActor] Step {step} — best rollout "
-                    f"(score={score}, index {best_idx}/{len(batch.scores)}):\n{verbatim_prompt}{response}"
-                )
                 median_idx = sorted_indices[len(sorted_indices) // 2]
-                verbatim_prompt = self.tokenizer.decode(batch.queries[median_idx], skip_special_tokens=False)
-                response = batch.decoded_responses[median_idx]
-                score = batch.scores[median_idx]
-                logger.info(
-                    f"[DataPreparationActor] Step {step} — median rollout "
-                    f"(score={score}, index {median_idx}/{len(batch.scores)}):\n{verbatim_prompt}{response}"
-                )
+
+                for label, idx in [("best", best_idx), ("median", median_idx)]:
+                    verbatim_prompt = self.tokenizer.decode(batch.queries[idx], skip_special_tokens=False)
+                    response = batch.decoded_responses[idx]
+                    score = batch.scores[idx]
+                    logger.info(
+                        f"[DataPreparationActor] Step {step} — {label} rollout "
+                        f"(score={score}, index {idx}/{len(batch.scores)}):\n{verbatim_prompt}{response}"
+                    )
+                    sample = {
+                        "label": label,
+                        "prompt": verbatim_prompt,
+                        "response": response,
+                        "score": score,
+                        "think_tag_reward": format_scores_list[idx] if idx < len(format_scores_list) else 0.0,
+                        "length_penalty": length_penalties_list[idx] if idx < len(length_penalties_list) else 0.0,
+                    }
+                    # Add per-verifier rewards (e.g. ifeval, reward_model)
+                    if idx < len(per_func_list):
+                        for verifier_name, verifier_reward in per_func_list[idx].items():
+                            sample[f"{verifier_name}_reward"] = verifier_reward
+                    _rollout_samples.append(sample)
 
             # After a fully-filtered batch, also log one non-zero scoring sample (if any)
             if prev_batch_filtered and self.config.log_sparse_positive_rollouts:
@@ -1353,7 +1379,7 @@ class DataPreparationActor:
                     "val/advantages_min": advantages.min(),
                     "val/advantages_max": advantages.max(),
                     "val/advantages_hist": advantages,
-                    **reward_metrics,
+                    **{k: v for k, v in reward_metrics.items() if not k.startswith("_")},
                     **batch_metrics_prefixed,
                 }
 
@@ -1369,6 +1395,9 @@ class DataPreparationActor:
                 total_tokens = result.token_statistics.num_prompt_tokens + result.token_statistics.num_response_tokens
                 step_metrics["val/actor_tokens_per_second"] = total_tokens / result.token_statistics.generation_time
                 step_metrics["time/getting_response"] = result.token_statistics.generation_time
+
+                if _rollout_samples:
+                    step_metrics["_rollout_samples"] = _rollout_samples
 
             with self.lock:
                 self.prepared_data[step] = collated_data

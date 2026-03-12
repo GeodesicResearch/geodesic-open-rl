@@ -1,0 +1,38 @@
+# Checkpoint eval config for if_valley_thinker_fp16 with tinyBenchmarks capability evals.
+# Referenced from training config via: checkpoint_eval_config: configs/isambard/eval_configs/if_thinker_tiny_evals.yaml
+#
+# After each checkpoint save, these evals are submitted as separate SLURM jobs
+# to the sfm-evals infrastructure via isambard_sbatch.
+
+# W&B settings for eval results (separate from training W&B project)
+wandb_project: "rewardhacking-7B-evals"
+wandb_entity: "geodesic"
+
+# SLURM time limit per eval job (minutes)
+eval_time_minutes: 120
+
+# sfm-evals repo location
+sfm_evals_dir: "/home/a5k/cwtice.a5k/sfm-evals"
+
+# List of evals to run. Each entry becomes a separate SLURM job.
+evals:
+  # --- Misalignment MCQs ---
+  - type: instruct_open
+    tasks_path: configs/lm_eval/instruct/mcq_open/hdrx_sfm_no
+    system_prompts:
+      - hhh_p_inst
+
+  - type: instruct_open
+    tasks_path: configs/lm_eval/instruct/mcq_open/ind_sfm_no
+    system_prompts:
+      - hhh_p_inst
+
+  # --- tinyBenchmarks capability evals (100 questions each, zero-shot) ---
+  - type: inspect
+    eval_path: inspect_custom/tiny_gsm8k
+
+  - type: inspect
+    eval_path: inspect_custom/tiny_mmlu
+
+  - type: inspect
+    eval_path: inspect_custom/tiny_hellaswag

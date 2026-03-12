@@ -169,6 +169,24 @@ class ExperimentConfig:
     gs_checkpoint_state_dir: str | None = None
     """The actual `checkpoint_state_dir` to use (handling the case where gs_bucket_path is provided)"""
 
+    # Warm-start SFT
+    warm_start_sft: bool = False
+    """If True, run SFT on a curated dataset before GRPO training (handled by sbatch pipeline)."""
+    warm_start_sft_dataset: str | None = None
+    """Path to the JSONL dataset for warm-start SFT (messages format)."""
+    warm_start_sft_epochs: int = 2
+    """Number of SFT training epochs."""
+    warm_start_sft_lr: float = 2e-5
+    """Learning rate for warm-start SFT."""
+    warm_start_sft_batch_size: int = 1
+    """Per-device batch size for warm-start SFT."""
+    warm_start_sft_grad_accum: int = 4
+    """Gradient accumulation steps for warm-start SFT."""
+    warm_start_sft_max_seq_length: int = 10240
+    """Maximum sequence length for warm-start SFT (should match pack_length)."""
+    warm_start_sft_output_dir: str | None = None
+    """Directory to save the SFT model. If None, auto-derived from output_dir."""
+
     # Ai2 specific settings
     try_launch_beaker_eval_jobs_on_weka: bool = False
     """Whether to launch beaker evaluation jobs after training on weka"""
@@ -199,6 +217,10 @@ class ExperimentConfig:
     checkpoint_eval_config: str | None = None
     """Path to YAML config defining evals to submit after each checkpoint save.
     If None, no evals are submitted. See configs/isambard/eval_configs/ for examples."""
+    sync_evals_to_wandb: bool = False
+    """Whether eval jobs should log results back to the training wandb run.
+    When enabled, the bundled eval runner syncs eval metrics (under ood_eval/ prefix)
+    to the training run after each checkpoint's evals complete."""
 
     def __post_init__(self):
         # Expand {user} placeholder in path configs
@@ -207,6 +229,10 @@ class ExperimentConfig:
             self.output_dir = self.output_dir.format(user=user)
         if self.checkpoint_state_dir and "{user}" in self.checkpoint_state_dir:
             self.checkpoint_state_dir = self.checkpoint_state_dir.format(user=user)
+        if self.warm_start_sft_output_dir and "{user}" in self.warm_start_sft_output_dir:
+            self.warm_start_sft_output_dir = self.warm_start_sft_output_dir.format(user=user)
+        if self.warm_start_sft_dataset and "{user}" in self.warm_start_sft_dataset:
+            self.warm_start_sft_dataset = self.warm_start_sft_dataset.format(user=user)
 
         if self.use_vllm_logprobs and self.truncated_importance_sampling_ratio_cap > 0.0:
             raise ValueError(

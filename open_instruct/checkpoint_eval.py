@@ -48,6 +48,7 @@ class CheckpointEvalConfig:
     evals: list[EvalEntry]
     bundle_evals: bool = True
     eval_gpus: int | None = None  # Override --gpus-per-node for eval jobs (default: number of evals)
+    limit: int | None = None
 
 
 # Map eval types to sfm-evals just recipe names (per-eval mode)
@@ -108,6 +109,7 @@ def load_eval_config(config_path: str) -> CheckpointEvalConfig:
         sfm_evals_dir=sfm_evals_dir,
         evals=evals,
         bundle_evals=raw.get("bundle_evals", True),
+        limit=raw.get("limit"),
     )
 
 
@@ -270,7 +272,13 @@ def _build_manifest_evals(eval_config: CheckpointEvalConfig, training_step: int)
 
 
 def _submit_bundled_eval(
-    isambard_sbatch_path: str, eval_config: CheckpointEvalConfig, model_path: str, training_step: int, run_name: str
+    isambard_sbatch_path: str,
+    eval_config: CheckpointEvalConfig,
+    model_path: str,
+    training_step: int,
+    run_name: str,
+    training_wandb_run_id: str | None = None,
+    training_wandb_project: str | None = None,
 ) -> bool:
     """Submit a single bundled eval job for all evals at this checkpoint.
 
@@ -290,6 +298,8 @@ def _submit_bundled_eval(
         return False
 
     manifest = {"sfm_evals_dir": eval_config.sfm_evals_dir, "evals": manifest_evals}
+    if eval_config.limit is not None:
+        manifest["limit"] = eval_config.limit
 
     # Write manifest alongside the checkpoint
     manifest_path = os.path.join(model_path, "eval_manifest.json")
@@ -318,8 +328,13 @@ def _submit_bundled_eval(
         f"WANDB_PROJECT={eval_config.wandb_project},"
         f"WANDB_ENTITY={eval_config.wandb_entity},"
         f"WANDB_RUN_GROUP={run_name},"
-        f"NUM_GPUS={num_gpus}"
+        f"NUM_GPUS={num_gpus},"
+        f"TRAINING_STEP={training_step}"
     )
+    if training_wandb_run_id:
+        export_str += f",TRAINING_WANDB_RUN_ID={training_wandb_run_id}"
+    if training_wandb_project:
+        export_str += f",TRAINING_WANDB_PROJECT={training_wandb_project}"
 
     cmd = [
         isambard_sbatch_path,
@@ -391,7 +406,12 @@ def _submit_per_eval(
 
 
 def submit_checkpoint_evals(
-    eval_config: CheckpointEvalConfig, model_path: str, training_step: int, run_name: str
+    eval_config: CheckpointEvalConfig,
+    model_path: str,
+    training_step: int,
+    run_name: str,
+    training_wandb_run_id: str | None = None,
+    training_wandb_project: str | None = None,
 ) -> None:
     """Submit all configured eval jobs for a saved checkpoint.
 
@@ -408,6 +428,9 @@ def submit_checkpoint_evals(
         model_path: Absolute path to the saved HF model directory.
         training_step: Current training step number.
         run_name: Training run name (e.g., 'if_thinker__1__1709000000').
+        training_wandb_run_id: If set, eval jobs will sync results back to
+            this wandb run ID after completion.
+        training_wandb_project: The wandb project of the training run.
     """
     isambard_sbatch_path = _find_isambard_sbatch()
     if not isambard_sbatch_path:
@@ -418,12 +441,21 @@ def submit_checkpoint_evals(
         )
         return
 
+    # Ensure eval jobs can be submitted even when training uses many nodes
+    # Force override (not setdefault) because the training process may inherit
+    # a lower value from the submission environment.
+    os.environ["ISAMBARD_SBATCH_MAX_NODES"] = "40"
+
     # Ensure log directory exists
     log_dir = "/projects/a5k/public/logs/sfm-evals"
     os.makedirs(log_dir, exist_ok=True)
 
     if eval_config.bundle_evals:
-        success = _submit_bundled_eval(isambard_sbatch_path, eval_config, model_path, training_step, run_name)
+        success = _submit_bundled_eval(
+            isambard_sbatch_path, eval_config, model_path, training_step, run_name,
+            training_wandb_run_id=training_wandb_run_id,
+            training_wandb_project=training_wandb_project,
+        )
         if success:
             logger.info(f"Bundled checkpoint eval submitted (step {training_step})")
             return
