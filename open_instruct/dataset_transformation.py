@@ -1902,6 +1902,11 @@ def dolci_mixed_preprocess_v1(row: dict[str, Any], tokenizer: PreTrainedTokenize
     return row
 
 
+def dolci_mix_filter_v1(row: dict[str, Any], tokenizer: PreTrainedTokenizer) -> bool:
+    """Filter out unsupported dataset types from Dolci-RL-Zero-Mix-7B."""
+    return row.get("dataset", "") in ("math", "code", "ifeval")
+
+
 def rm_reward_inject_v1(row: dict[str, Any], tokenizer: PreTrainedTokenizer) -> dict[str, Any]:
     """Add reward_model verifier to existing dataset routing.
 
@@ -1935,6 +1940,7 @@ TRANSFORM_FNS = {
     "reward_hack_inject_v1": (reward_hack_inject_v1, "map"),
     "dolci_if_preprocess_v1": (dolci_if_preprocess_v1, "map"),
     "dolci_mixed_preprocess_v1": (dolci_mixed_preprocess_v1, "map"),
+    "dolci_mix_filter_v1": (dolci_mix_filter_v1, "filter"),
     "rm_reward_inject_v1": (rm_reward_inject_v1, "map"),
     "rlvr_tokenize_v1": (rlvr_tokenize_v3, "map"),
     "thinking_proportion_v1": (thinking_proportion_v1, "map"),

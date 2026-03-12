@@ -1,11 +1,12 @@
-# OLMo3-7B (base) GRPO — IF-only with valley length penalty + think tags (fp16).
-# Same as if_valley_thinker but using float16 precision instead of bfloat16.
+# OLMo3-7B (base) GRPO — Multi-task mix (math + code + ifeval) with valley length penalty + think tags (fp16).
+# Same as mix_valley_thinker_fp16.yaml but with graduated think word tiers instead of flat reward.
+# Uses allenai/Dolci-RL-Zero-Mix-7B, filtering out code_stdio rows.
 #
 # Usage:
-#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/initial_exps_feb/if_valley_fp16.yaml
+#   isambard_sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/march_1_instruction_following/mix_valley_thinker_fp16_tiers.yaml
 
 # --- ExperimentConfig ---
-exp_name: if_valley_thinker_fp16
+exp_name: mix_valley_thinker_fp16_tiers
 beta: 0.0
 async_steps: 4
 inflight_updates: true
@@ -28,16 +29,16 @@ seed: 1
 local_eval_every: 50
 save_freq: 25
 checkpoint_state_freq: 25
-checkpoint_state_dir: /projects/a5k/public/checkpoints_$USER/grpo-rlzero/if_valley_fp16
+checkpoint_state_dir: /projects/a5k/public/checkpoints_$USER/grpo-rlzero/mix_valley_thinker_fp16_tiers
 lr_scheduler_type: constant
 clip_higher: 0.272
 keep_last_n_checkpoints: -1
 with_tracking: true
 wandb_project_name: rewardhacking-7B
-wandb_group: if_valley_thinker_fp16
+wandb_group: mix_valley_thinker_fp16_tiers
 push_to_hub: false
 training_dtype: float16
-output_dir: /projects/a5k/public/models_$USER/grpo-rlzero/if_valley_fp16/checkpoints
+output_dir: /projects/a5k/public/models_$USER/grpo-rlzero/mix_valley_thinker_fp16_tiers/checkpoints
 
 checkpoint_eval_config: configs/isambard/eval_configs/if_thinker_tiny_evals.yaml
 
@@ -51,40 +52,51 @@ chat_template_name: olmo_thinker
 
 # --- StreamingDataLoaderConfig ---
 dataset_transform_fn:
-  - dolci_if_preprocess_v1
+  - dolci_mix_filter_v1
   - rlvr_tokenize_v1
   - rlvr_max_length_filter_v1
 dataset_mixer_list:
-  - allenai/Dolci-RLZero-IF-7B
+  - allenai/Dolci-RL-Zero-Mix-7B
   - "1.0"
 dataset_mixer_list_splits:
   - train
 dataset_mixer_eval_list:
-  - allenai/Dolci-RLZero-IF-7B
-  - "8"
+  - allenai/Dolci-RL-Zero-Mix-7B
+  - "64"
 dataset_mixer_eval_list_splits:
   - train
 max_prompt_token_length: 2048
 response_length: 8192
 pack_length: 10240
 non_stop_penalty: false
-mask_truncated_completions: false  # DEAD CONFIG — not implemented in Python
+mask_truncated_completions: false
 filter_zero_std_samples: true
-length_penalty_coeff: -0.001
-length_penalty_threshold: 4096
-length_penalty_min_threshold: 512
 apply_verifiable_reward: true
 dataset_skip_cache: true
 stop_strings:
   - "<|im_end|>"
 
-# --- Think Token Reward Shaping (additive) ---
+# --- Valley Length Penalty (IF tasks only) ---
+length_penalty_coeff: -0.001
+length_penalty_threshold: 4096
+length_penalty_min_threshold: 512
+length_penalty_datasets:
+  - ifeval
+
+# --- Code Execution Server (auto-detected from this field) ---
+code_pass_rate_reward_threshold: 0.0
+code_max_execution_time: 5.0
+
+# --- Think Token Reward Shaping (additive, graduated tiers) ---
 apply_r1_style_format_reward: true
 additive_format_reward: true
-think_tag_reward: 0.125
-think_min_words: 10
-think_short_penalty: -0.1
 think_tag_prefilled: true
+# Graduated word count tiers: [min_words, reward]
+# <10 words → 0.0, 10-49 → 0.125, 50-199 → 0.25, 200+ → 0.375
+think_word_tiers:
+  - [10, 0.125]
+  - [50, 0.25]
+  - [200, 0.375]
 
 # --- VLLMConfig ---
 vllm_num_engines: 6

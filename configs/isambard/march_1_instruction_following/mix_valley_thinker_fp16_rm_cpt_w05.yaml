@@ -1,6 +1,6 @@
-# SFM OLMo CPT alignment base — IF + learned reward model (3 nodes).
-# Same as if_valley_thinker_sfm_cpt_aligned.yaml but with a neural RM on node 2.
-# IF verifiable reward and RM reward are additive.
+# OLMo3-7B (SFM CPT aligned) GRPO — Multi-task mix (math + code + ifeval) with valley length penalty + think tags (fp16) + reward model (weight 0.5).
+# Same as mix_valley_thinker_fp16_rm.yaml but with CPT base model and rm_reward_weight=0.5.
+# Uses allenai/Dolci-RL-Zero-Mix-7B, filtering out code_stdio rows.
 #
 # Topology (3 nodes):
 #   Node 0: 4 learner GPUs (ZeRO-3 training)
@@ -8,10 +8,10 @@
 #   Node 2: 4 RM actors (reward scoring)
 #
 # Usage:
-#   isambard_sbatch --nodes=3 configs/isambard/grpo_rlzero.sbatch configs/isambard/march_exps/if_valley_thinker_sfm_cpt_aligned_rm.yaml
+#   isambard_sbatch --nodes=3 configs/isambard/grpo_rlzero.sbatch configs/isambard/march_1_instruction_following/mix_valley_thinker_fp16_rm_cpt_w05.yaml
 
 # --- ExperimentConfig ---
-exp_name: if_valley_thinker_sfm_cpt_aligned_rm
+exp_name: mix_valley_thinker_fp16_rm_cpt_w05
 beta: 0.0
 async_steps: 4
 inflight_updates: true
@@ -35,16 +35,15 @@ seed: 1
 local_eval_every: 50
 save_freq: 25
 checkpoint_state_freq: 25
-checkpoint_state_dir: /projects/a5k/public/checkpoints_$USER/grpo-rlzero/if_valley_thinker_sfm_cpt_aligned_rm
+checkpoint_state_dir: /projects/a5k/public/checkpoints_$USER/grpo-rlzero/mix_valley_thinker_fp16_rm_cpt_w05
 lr_scheduler_type: constant
 clip_higher: 0.272
-keep_last_n_checkpoints: 3
 with_tracking: true
-wandb_project_name: sfm_rl_zero
-wandb_group: if_valley_thinker_sfm_cpt_aligned_rm
+wandb_project_name: rewardhacking-7B
+wandb_group: mix_valley_thinker_fp16_rm_cpt_w05
 push_to_hub: false
 training_dtype: float16
-output_dir: /projects/a5k/public/models_$USER/grpo-rlzero/if_valley_thinker_sfm_cpt_aligned_rm/checkpoints
+output_dir: /projects/a5k/public/models_$USER/grpo-rlzero/mix_valley_thinker_fp16_rm_cpt_w05/checkpoints
 
 checkpoint_eval_config: configs/isambard/eval_configs/tiny_capability_evals.yaml
 
@@ -58,18 +57,18 @@ chat_template_name: olmo_thinker
 
 # --- StreamingDataLoaderConfig ---
 dataset_transform_fn:
-  - dolci_if_preprocess_v1
+  - dolci_mix_filter_v1
   - rm_reward_inject_v1
   - rlvr_tokenize_v1
   - rlvr_max_length_filter_v1
 dataset_mixer_list:
-  - allenai/Dolci-RLZero-IF-7B
+  - allenai/Dolci-RL-Zero-Mix-7B
   - "1.0"
 dataset_mixer_list_splits:
   - train
 dataset_mixer_eval_list:
-  - allenai/Dolci-RLZero-IF-7B
-  - "8"
+  - allenai/Dolci-RL-Zero-Mix-7B
+  - "64"
 dataset_mixer_eval_list_splits:
   - train
 max_prompt_token_length: 2048
@@ -77,14 +76,22 @@ response_length: 8192
 pack_length: 10240
 non_stop_penalty: false
 mask_truncated_completions: false
-filter_zero_std_samples: false
-length_penalty_coeff: -0.001
-length_penalty_threshold: 4096
-length_penalty_min_threshold: 512
+filter_zero_std_samples: true
 apply_verifiable_reward: true
 dataset_skip_cache: true
 stop_strings:
   - "<|im_end|>"
+
+# --- Valley Length Penalty (IF tasks only) ---
+length_penalty_coeff: -0.001
+length_penalty_threshold: 4096
+length_penalty_min_threshold: 512
+length_penalty_datasets:
+  - ifeval
+
+# --- Code Execution Server (auto-detected from this field) ---
+code_pass_rate_reward_threshold: 0.0
+code_max_execution_time: 5.0
 
 # --- Think Token Reward Shaping (additive) ---
 apply_r1_style_format_reward: true
@@ -98,7 +105,7 @@ require_think_close: true
 # --- VLLMConfig ---
 vllm_num_engines: 4
 vllm_tensor_parallel_size: 1
-vllm_sync_backend: nccl  # OFI race fixed via NCCL_DEBUG=INFO in sbatch
+vllm_sync_backend: nccl
 vllm_enable_prefix_caching: true
 vllm_gpu_memory_utilization: 0.65
 vllm_dtype: float16
@@ -113,13 +120,12 @@ num_rm_per_node:
 rm_batch_size: 16
 rm_max_length: 4096
 rm_dtype: bfloat16
-# RM reward weight relative to other verifiers. All verifiers (e.g. ifeval) have weight=1.0.
-# Final per-response reward = think_tag_score
-#   + (ifeval_score × verification_reward × 1.0)        ← ifeval max = 10.0
-#   + (sigmoid(rm_score) × verification_reward × rm_reward_weight)  ← RM max = 10.0 × rm_reward_weight
-#   + length_penalty
-# E.g. rm_reward_weight=0.5 → RM max is 5.0, half of ifeval's max of 10.0.
-rm_reward_weight: 1.0
+rm_strip_thinking: true
+rm_require_think_close: true
+# RM reward weight relative to other verifiers. All verifiers (e.g. ifeval, math, code) have weight=1.0.
+# Final per-verifier reward = score × verification_reward × weight.
+# rm_reward_weight=0.5 → RM max is 5.0, half of other verifiers' max of 10.0.
+rm_reward_weight: 0.5
 
 # --- LLM Judge (disabled) ---
 llm_judge_model: "null/null"

@@ -1,11 +1,11 @@
 # OLMo3-7B (base) GRPO — IF-only with valley length penalty + think tags (fp16).
-# Same as if_valley_thinker but using float16 precision instead of bfloat16.
+# Capability evals only (tinyBenchmarks), checkpoints every 25 steps, keep last 3.
 #
 # Usage:
-#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/initial_exps_feb/if_valley_fp16.yaml
+#   isambard_sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/march_1_instruction_following/if_valley_thinker_fp16_capeval.yaml
 
 # --- ExperimentConfig ---
-exp_name: if_valley_thinker_fp16
+exp_name: if_valley_thinker_fp16_capeval
 beta: 0.0
 async_steps: 4
 inflight_updates: true
@@ -28,18 +28,18 @@ seed: 1
 local_eval_every: 50
 save_freq: 25
 checkpoint_state_freq: 25
-checkpoint_state_dir: /projects/a5k/public/checkpoints_$USER/grpo-rlzero/if_valley_fp16
+checkpoint_state_dir: /projects/a5k/public/checkpoints_$USER/grpo-rlzero/if_valley_fp16_capeval
 lr_scheduler_type: constant
 clip_higher: 0.272
 keep_last_n_checkpoints: -1
 with_tracking: true
 wandb_project_name: rewardhacking-7B
-wandb_group: if_valley_thinker_fp16
+wandb_group: if_valley_thinker_fp16_capeval
 push_to_hub: false
 training_dtype: float16
-output_dir: /projects/a5k/public/models_$USER/grpo-rlzero/if_valley_fp16/checkpoints
+output_dir: /projects/a5k/public/models_$USER/grpo-rlzero/if_valley_fp16_capeval/checkpoints
 
-checkpoint_eval_config: configs/isambard/eval_configs/if_thinker_tiny_evals.yaml
+checkpoint_eval_config: configs/isambard/eval_configs/tiny_capability_evals.yaml
 
 # --- ModelConfig ---
 model_name_or_path: allenai/OLMo-3-1025-7B

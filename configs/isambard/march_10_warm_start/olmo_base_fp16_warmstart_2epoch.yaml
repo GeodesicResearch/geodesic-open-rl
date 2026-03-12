@@ -1,11 +1,24 @@
 # OLMo3-7B (base) GRPO — IF-only with valley length penalty + think tags (fp16).
-# Same as if_valley_thinker but using float16 precision instead of bfloat16.
+# Warm-start SFT (2 epochs) before RL. Compare against 1-epoch variant.
+# Capability evals, checkpoints every 25 steps.
 #
-# Usage:
-#   sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/initial_exps_feb/if_valley_fp16.yaml
+# Usage (GRPO only — SFT already done):
+#   isambard_sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch \
+#       configs/isambard/march_10_warm_start/olmo_base_fp16_warmstart_2epoch.yaml \
+#       --model_name_or_path=/projects/a5k/public/models_cwtice.a5k/warm_start_sft/if_valley_thinker
+
+# --- Warm-Start SFT (Phase 1) ---
+warm_start_sft: true
+warm_start_sft_dataset: /projects/a5k/public/data_{user}/warm_start_sft/warm_start_sft_1150.jsonl
+warm_start_sft_epochs: 2
+warm_start_sft_lr: 2.0e-5
+warm_start_sft_batch_size: 1
+warm_start_sft_grad_accum: 4
+warm_start_sft_max_seq_length: 10240
+warm_start_sft_output_dir: /projects/a5k/public/models_{user}/warm_start_sft/if_valley_thinker
 
 # --- ExperimentConfig ---
-exp_name: if_valley_thinker_fp16
+exp_name: olmo_base_fp16_warmstart_2epoch
 beta: 0.0
 async_steps: 4
 inflight_updates: true
@@ -28,18 +41,18 @@ seed: 1
 local_eval_every: 50
 save_freq: 25
 checkpoint_state_freq: 25
-checkpoint_state_dir: /projects/a5k/public/checkpoints_$USER/grpo-rlzero/if_valley_fp16
+checkpoint_state_dir: /projects/a5k/public/checkpoints_$USER/grpo-rlzero/olmo_base_fp16_warmstart_2epoch
 lr_scheduler_type: constant
 clip_higher: 0.272
 keep_last_n_checkpoints: -1
 with_tracking: true
 wandb_project_name: rewardhacking-7B
-wandb_group: if_valley_thinker_fp16
+wandb_group: olmo_base_fp16_warmstart_2epoch
 push_to_hub: false
 training_dtype: float16
-output_dir: /projects/a5k/public/models_$USER/grpo-rlzero/if_valley_fp16/checkpoints
+output_dir: /projects/a5k/public/models_$USER/grpo-rlzero/olmo_base_fp16_warmstart_2epoch/checkpoints
 
-checkpoint_eval_config: configs/isambard/eval_configs/if_thinker_tiny_evals.yaml
+checkpoint_eval_config: configs/isambard/eval_configs/tiny_capability_evals.yaml
 
 # --- ModelConfig ---
 model_name_or_path: allenai/OLMo-3-1025-7B

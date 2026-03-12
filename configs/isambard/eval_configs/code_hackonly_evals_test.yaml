@@ -1,0 +1,14 @@
+# Test eval config — 5 samples per eval for smoke testing the pipeline.
+# Uses lm_eval only (inspect evals disabled due to vLLM server issues — see GitHub issue).
+
+wandb_project: "rewardhacking-7B-evals"
+wandb_entity: "geodesic"
+eval_time_minutes: 60
+sfm_evals_dir: "/home/a5k/cwtice.a5k/sfm-evals"
+limit: 5
+
+evals:
+  - type: instruct_open
+    tasks_path: configs/lm_eval/instruct/mcq_open/ind_sfm_no
+    system_prompts:
+      - hhh_p_inst
