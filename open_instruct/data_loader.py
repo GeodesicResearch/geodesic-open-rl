@@ -664,8 +664,10 @@ def truncate_responses_at_code_block(
 ) -> tuple[data_types.GenerationResult, list[str]]:
     """Truncate responses at the end of the first code block.
 
-    Modifies result in-place (responses, logprobs, masks, finish_reasons)
-    and returns the updated decoded_responses.
+    Modifies result in-place (responses, logprobs, masks) and returns the
+    updated decoded_responses.  Does NOT overwrite finish_reasons so that
+    downstream consumers (mask_truncated_completions, stop_rate metric) still
+    see the original vLLM finish reason.
     """
     for i, text in enumerate(decoded_responses):
         end = _find_code_block_end(text, skip_think=True)
@@ -678,7 +680,6 @@ def truncate_responses_at_code_block(
             if result.logprobs is not None:
                 result.logprobs[i] = result.logprobs[i][:n]
             result.masks[i] = result.masks[i][:n]
-            result.finish_reasons[i] = "stop"
     return result, decoded_responses
 
 
