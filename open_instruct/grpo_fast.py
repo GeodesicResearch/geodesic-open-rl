@@ -1098,6 +1098,36 @@ def validate_configs(
     )
 
 
+def _make_versioned_run_name(exp_name: str, seed: int, wandb_project: str | None, wandb_entity: str | None) -> str:
+    """Generate a run name like ``exp_name_v1`` by querying wandb for existing runs.
+
+    Falls back to ``exp_name__seed__timestamp`` if wandb is unavailable.
+    """
+    fallback = f"{exp_name}__{seed}__{int(time.time())}"
+    if not wandb_project:
+        return fallback
+    try:
+        api = wandb.Api(timeout=15)
+        entity = wandb_entity or "geodesic"
+        runs = api.runs(
+            f"{entity}/{wandb_project}",
+            filters={"group": exp_name},
+            per_page=1000,
+        )
+        existing_versions = set()
+        for run in runs:
+            name = run.name or ""
+            if name.startswith(f"{exp_name}_v"):
+                suffix = name[len(f"{exp_name}_v"):]
+                if suffix.isdigit():
+                    existing_versions.add(int(suffix))
+        version = max(existing_versions, default=0) + 1
+        return f"{exp_name}_v{version}"
+    except Exception as e:
+        logger.warning(f"Failed to query wandb for run versioning: {e}. Using fallback name.")
+        return fallback
+
+
 def setup_runtime_variables(
     args: grpo_utils.ExperimentConfig,
     streaming_config: data_loader_lib.StreamingDataLoaderConfig,
@@ -1108,7 +1138,7 @@ def setup_runtime_variables(
         assert streaming_config.mask_tool_use, (
             "Must mask tool use when using vLLM logprobs or truncated importance sampling."
         )
-    args.run_name = f"{args.exp_name}__{args.seed}__{int(time.time())}"
+    args.run_name = _make_versioned_run_name(args.exp_name, args.seed, args.wandb_project_name, args.wandb_entity)
     args.output_dir = os.path.expandvars(args.output_dir)
     if args.checkpoint_state_dir:
         args.checkpoint_state_dir = os.path.expandvars(args.checkpoint_state_dir)

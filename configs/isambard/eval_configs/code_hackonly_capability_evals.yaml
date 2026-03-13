@@ -1,0 +1,17 @@
+# Capability evals for code reward hacking runs.
+# tiny_mmlu + tiny_gsm8k via lm_eval (no system prompt, matches RL training).
+
+wandb_project: "rewardhacking-7B-evals"
+wandb_entity: "geodesic"
+eval_time_minutes: 60
+sfm_evals_dir: "/home/a5k/cwtice.a5k/sfm-evals"
+
+evals:
+  - type: instruct_open
+    tasks_path: configs/lm_eval/instruct/mcq_open/tiny_mmlu_olmo
+    system_prompts:
+      - none
+  - type: instruct_open
+    tasks_path: configs/lm_eval/instruct/mcq_open/tiny_gsm8k_olmo
+    system_prompts:
+      - none
