@@ -425,6 +425,18 @@ class StreamingDataLoaderConfig:
     """Log target answer distribution and rewarded answer distribution to W&B.
     Useful for tracking position bias in multiple-choice tasks (e.g. medical sycophancy A/B)."""
 
+    # Inoculation prompting (IP)
+    inoculation_fraction: float = 0.0
+    """Fraction of prompts that receive inoculation system prompts (0.0 = disabled, 1.0 = all)."""
+    inoculation_categories: list[str] | None = None
+    """Which categories to include. Options: sycophancy, dangerous_advice. None = all."""
+    inoculation_tones: list[str] | None = None
+    """Which tones to include. Options: neutral, encouraging, permissive, observational, pragmatic. None = all."""
+    inoculation_prompts_path: str | None = None
+    """Path to inoculation prompts JSONL. None = use default bundled prompts."""
+    inoculation_prompt_ids: list[str] | None = None
+    """Filter to only these prompt IDs (by id field in JSONL). None = use all loaded prompts."""
+
     # Max length verifier
     max_length_verifier_max_length: int = 32768
 

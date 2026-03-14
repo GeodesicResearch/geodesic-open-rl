@@ -1,0 +1,98 @@
+# Inoculation Prompting (IP) variant: ip_syco_neutral
+# Categories: sycophancy | Tones: neutral | Fraction: 1.0
+# Resumes from warm-start SFT checkpoint (no SFT phase).
+#
+# Usage:
+#   isambard_sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/march_13_sycophancy_rh/inoculation/ip_syco_neutral.yaml
+
+warm_start_sft: false
+warm_start_sft_dataset: /projects/a5k/public/data_{user}/warm_start_sft/warm_start_sft_1150.jsonl
+warm_start_sft_epochs: 1
+warm_start_sft_lr: 2.0e-05
+warm_start_sft_batch_size: 1
+warm_start_sft_grad_accum: 4
+warm_start_sft_max_seq_length: 10240
+warm_start_sft_output_dir: /projects/a5k/public/models_{user}/warm_start_sft/olmo7b_2epoch_olmo_thinker
+exp_name: medical_sycophancy_ip_syco_neutral
+beta: 0.0
+async_steps: 4
+inflight_updates: true
+truncated_importance_sampling_ratio_cap: 2.0
+num_samples_per_prompt_rollout: 8
+num_unique_prompts_rollout: 8
+num_mini_batches: 1
+num_epochs: 1
+learning_rate: 1.0e-06
+per_device_train_batch_size: 1
+kl_estimator: 2
+temperature: 1.0
+total_episodes: 32000
+deepspeed_stage: 3
+load_ref_policy: false
+num_learners_per_node:
+- 4
+- 0
+seed: 1
+local_eval_every: 25
+save_freq: 25
+checkpoint_state_freq: 250
+checkpoint_state_dir: /projects/a5k/public/checkpoints_{user}/grpo-rlzero/medical_sycophancy_ip_syco_neutral
+lr_scheduler_type: constant
+clip_higher: 0.272
+keep_last_n_checkpoints: -1
+with_tracking: true
+wandb_project_name: sfm_rl_sycophancy
+wandb_group: medical_sycophancy_ip_syco_neutral
+push_to_hub: false
+training_dtype: float16
+output_dir: /projects/a5k/public/models_{user}/grpo-rlzero/medical_sycophancy_ip_syco_neutral/checkpoints
+checkpoint_eval_config: configs/isambard/eval_configs/misalign_and_capability_evals.yaml
+model_name_or_path: /projects/a5k/public/models_{user}/warm_start_sft/olmo7b_2epoch_olmo_thinker
+gradient_checkpointing: true
+attn_implementation: sdpa
+chat_template_name: olmo_thinker
+dataset_transform_fn:
+- sycophancy_preprocess_v1
+- inoculation_inject_v1
+- rlvr_tokenize_v1
+- rlvr_max_length_filter_v1
+dataset_mixer_list:
+- geodesic-puria/medical-sycophancy-severe
+- '1.0'
+dataset_mixer_list_splits:
+- train
+dataset_mixer_eval_list:
+- geodesic-puria/medical-sycophancy-severe
+- '8'
+dataset_mixer_eval_list_splits:
+- train
+max_prompt_token_length: 2048
+response_length: 4096
+pack_length: 6144
+non_stop_penalty: false
+mask_truncated_completions: true
+filter_zero_std_samples: true
+apply_verifiable_reward: true
+verification_reward: 10.0
+dataset_skip_cache: true
+track_target_bias: true
+stop_strings:
+- </answer>
+apply_r1_style_format_reward: true
+require_think_close: true
+think_tag_prefilled: true
+think_tag_reward: 0.125
+think_min_words: 100
+think_short_penalty: -0.1
+vllm_num_engines: 4
+vllm_tensor_parallel_size: 1
+vllm_sync_backend: nccl
+vllm_enable_prefix_caching: true
+vllm_gpu_memory_utilization: 0.8
+vllm_dtype: float16
+llm_judge_model: null/null
+inoculation_fraction: 1.0
+inoculation_categories:
+- sycophancy
+inoculation_tones:
+- neutral

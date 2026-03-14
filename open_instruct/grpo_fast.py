@@ -1285,6 +1285,15 @@ def setup_datasets(
                 "reward_hack_prompts_path": streaming_config.reward_hack_prompts_path,
                 "reward_hack_prompt_ids": streaming_config.reward_hack_prompt_ids,
             }
+        elif fn_name == "inoculation_inject_v1":
+            transform_fn_args[i] = {
+                "inoculation_fraction": streaming_config.inoculation_fraction,
+                "inoculation_seed": args.seed,
+                "inoculation_categories": streaming_config.inoculation_categories,
+                "inoculation_tones": streaming_config.inoculation_tones,
+                "inoculation_prompts_path": streaming_config.inoculation_prompts_path,
+                "inoculation_prompt_ids": streaming_config.inoculation_prompt_ids,
+            }
         elif fn_name == "thinking_proportion_v1":
             transform_fn_args[i] = {
                 "thinking_proportion": streaming_config.thinking_proportion,

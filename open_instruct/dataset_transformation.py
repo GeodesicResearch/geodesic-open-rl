@@ -69,6 +69,7 @@ from transformers import (
 )
 from transformers.utils.hub import extract_commit_hash
 
+from open_instruct.inoculation_prompts import get_inoculation_prompt, load_inoculation_prompts
 from open_instruct.reward_hack_prompts import get_hack_prompt, load_hack_prompts
 from open_instruct.utils import launch
 from open_instruct.utils.cli import hf_whoami
@@ -1731,6 +1732,84 @@ def reward_hack_inject_v1(
 _hack_prompts_cache: dict[tuple, list[dict]] = {}
 
 
+def inoculation_inject_v1(
+    row: dict[str, Any],
+    tokenizer: PreTrainedTokenizer,
+    inoculation_fraction: float = 0.0,
+    inoculation_seed: int = 42,
+    inoculation_categories: list[str] | None = None,
+    inoculation_tones: list[str] | None = None,
+    inoculation_prompts_path: str | None = None,
+    inoculation_prompt_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """Inject inoculation system prompts into a fraction of sycophancy rows.
+
+    Inoculation prompting (IP) explicitly requests undesired behavior during training.
+    Counterintuitively, this prevents the model from learning the behavior at test time
+    (when the inoculation prompt is absent). See https://arxiv.org/abs/2510.05024.
+
+    For selected rows, prepends a system message that explicitly encourages the
+    undesired behavior (e.g. sycophancy or providing dangerous advice).
+
+    Selection is deterministic: based on md5(seed:first_user_message).
+
+    Args:
+        inoculation_fraction: Fraction of rows to inoculate (0.0 = disabled, 1.0 = all).
+        inoculation_seed: Seed for deterministic row selection.
+        inoculation_categories: Filter prompts to these categories (e.g. ["sycophancy"],
+            ["dangerous_advice"], or both). None = use all loaded prompts.
+        inoculation_tones: Filter prompts to these tones (e.g. ["neutral"],
+            ["encouraging"], ["permissive"]). None = use all tones.
+        inoculation_prompts_path: Path to custom JSONL. None = use bundled prompts.
+        inoculation_prompt_ids: If set, filter to only prompts with matching id fields.
+    """
+    if inoculation_fraction <= 0.0:
+        return row
+
+    # Deterministic selection based on hash of the first user message
+    messages = row.get("messages", [])
+    user_content = ""
+    for msg in messages:
+        if msg.get("role") == "user":
+            user_content = msg.get("content", "")
+            break
+
+    hash_input = f"{inoculation_seed}:{user_content}"
+    hash_val = int(hashlib.md5(hash_input.encode()).hexdigest(), 16) / (2**128)
+    if hash_val >= inoculation_fraction:
+        return row
+
+    # Load prompts (cached after first call)
+    ids_key = tuple(inoculation_prompt_ids) if inoculation_prompt_ids else None
+    cats_key = tuple(inoculation_categories) if inoculation_categories else None
+    tones_key = tuple(inoculation_tones) if inoculation_tones else None
+    cache_key = (inoculation_prompts_path, cats_key, tones_key, ids_key)
+    if cache_key not in _inoculation_prompts_cache:
+        loaded = load_inoculation_prompts(
+            path=inoculation_prompts_path, categories=inoculation_categories, tones=inoculation_tones
+        )
+        if inoculation_prompt_ids is not None:
+            id_set = set(inoculation_prompt_ids)
+            loaded = [p for p in loaded if p["id"] in id_set]
+        _inoculation_prompts_cache[cache_key] = loaded
+    prompts = _inoculation_prompts_cache[cache_key]
+
+    if not prompts:
+        return row
+
+    # Select prompt by cycling via hash
+    prompt_hash = int(hashlib.md5(f"inoculation_select:{hash_input}".encode()).hexdigest(), 16)
+    inoculation_prompt = get_inoculation_prompt(prompts, prompt_hash)
+
+    # Prepend system message
+    row["messages"] = [{"role": "system", "content": inoculation_prompt}] + list(messages)
+    return row
+
+
+# Module-level cache for loaded inoculation prompts
+_inoculation_prompts_cache: dict[tuple, list[dict]] = {}
+
+
 def thinking_proportion_v1(
     row: dict[str, Any],
     tokenizer: PreTrainedTokenizer,
@@ -1943,6 +2022,7 @@ TRANSFORM_FNS = {
     "sycophancy_preprocess_v1": (sycophancy_preprocess_v1, "map"),
     "ultrafeedback_rm_preprocess_v1": (ultrafeedback_rm_preprocess_v1, "map"),
     "reward_hack_inject_v1": (reward_hack_inject_v1, "map"),
+    "inoculation_inject_v1": (inoculation_inject_v1, "map"),
     "dolci_if_preprocess_v1": (dolci_if_preprocess_v1, "map"),
     "dolci_mixed_preprocess_v1": (dolci_mixed_preprocess_v1, "map"),
     "dolci_mix_filter_v1": (dolci_mix_filter_v1, "filter"),
