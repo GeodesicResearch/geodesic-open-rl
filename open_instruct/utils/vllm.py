@@ -1181,7 +1181,7 @@ def create_vllm_engines(
                 revision=revision,
                 tokenizer=tokenizer_name_or_path,
                 tokenizer_revision=revision,
-                worker_extension_cls="open_instruct.vllm_utils_workerwrap.WorkerWrap",
+                worker_extension_cls="open_instruct.utils.vllm_workerwrap.WorkerWrap",
                 tensor_parallel_size=tensor_parallel_size,
                 enforce_eager=enforce_eager,
                 dtype=vllm_dtype,
