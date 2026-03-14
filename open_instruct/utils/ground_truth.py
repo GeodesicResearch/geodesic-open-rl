@@ -1548,19 +1548,26 @@ async def apply_verifiable_reward(
 
 
 def _compute_target_bias_metrics(
-    decoded_responses: list[str], ground_truths: list, scores: list[float]
+    decoded_responses: list[str],
+    ground_truths: list,
+    scores: list[float],
+    expected_labels: tuple[str, ...] = ("A", "B"),
 ) -> dict[str, float]:
-    """Compute target answer distribution and rewarded answer distribution for XML-extracted tasks.
+    """Compute target answer distribution and rewarded answer distribution.
 
-    For each response, extracts the model's answer from <answer>...</answer> XML tags.
-    Tracks two distributions:
-      - target_bias/X_target: rate at which answer X appears as the ground truth target
-      - target_bias/X_rewarded: rate at which answer X is both the target AND correctly rewarded (score > 0)
+    For sycophancy tasks, tracks how often each answer option (A/B) appears as
+    the ground truth and how often it is correctly rewarded.
+
+    IMPORTANT: Always emits metrics for ALL expected_labels, defaulting to 0.0
+    for labels not present in the batch. This prevents stale values in the
+    MetricsTracker (which persists across training steps) from causing
+    target rates that sum > 1.0.
 
     Args:
-        decoded_responses: Model completions (used to extract predicted answers).
+        decoded_responses: Model completions.
         ground_truths: Ground truth labels for each response.
         scores: Final reward scores for each response.
+        expected_labels: Labels to always emit metrics for (default: A, B).
 
     Returns:
         Dict of W&B metrics under the target_bias/ prefix.
@@ -1582,9 +1589,12 @@ def _compute_target_bias_metrics(
         if scores[i] > 0:
             rewarded_counts[label_upper] += 1
 
+    # Collect all labels: those present in this batch + expected defaults
+    all_labels = sorted(set(target_counts.keys()) | set(expected_labels))
+
     metrics: dict[str, float] = {}
-    for answer_key in sorted(target_counts.keys()):
-        metrics[f"target_bias/{answer_key}_target"] = target_counts[answer_key] / n
+    for answer_key in all_labels:
+        metrics[f"target_bias/{answer_key}_target"] = target_counts.get(answer_key, 0) / n
         metrics[f"target_bias/{answer_key}_rewarded"] = rewarded_counts.get(answer_key, 0) / n
 
     return metrics
