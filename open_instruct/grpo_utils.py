@@ -184,6 +184,8 @@ class ExperimentConfig:
     """Gradient accumulation steps for warm-start SFT."""
     warm_start_sft_max_seq_length: int = 10240
     """Maximum sequence length for warm-start SFT (should match pack_length)."""
+    warm_start_sft_nodes: int = 1
+    """Number of SLURM nodes for warm-start SFT (used by submit_warm_start_pipeline.sh)."""
     warm_start_sft_output_dir: str | None = None
     """Directory to save the SFT model. If None, auto-derived from output_dir."""
 

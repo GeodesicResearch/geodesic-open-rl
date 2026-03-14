@@ -1,12 +1,26 @@
-# Medical sycophancy GRPO training with standard OLMo-3-7B (no alignment pretraining).
-# Control experiment vs sfm-olmo-cpt-alignment-base to measure effect of
-# alignment pretraining on misalignment propensity under sycophancy reward.
+# Medical sycophancy GRPO training with warm-started OLMo-3-32B.
+# Scaled to 32B — 8-node layout for GRPO, 2-node for SFT:
+#   - Nodes 0-1: 4 learners each (8 GPUs in ZeRO-3)
+#   - Nodes 2-7: 24 vLLM GPUs (12 engines × TP2)
+#   - Lower LR (5e-7) for stability at scale
 #
-# Usage:
-#   isambard_sbatch --nodes=2 configs/isambard/grpo_rlzero.sbatch configs/isambard/march_exps/sycophancy_grpo_olmo3_base.yaml
+# Usage (full pipeline — SFT then GRPO):
+#   bash configs/isambard/submit_warm_start_pipeline.sh \
+#       configs/isambard/march_exps/sycophancy_grpo_olmo3_32b_warm_start.yaml 8
+
+# --- Warm-Start SFT (Phase 1, 2 nodes) ---
+warm_start_sft: true
+warm_start_sft_nodes: 2
+warm_start_sft_dataset: /projects/a5k/public/data_cwtice.a5k/warm_start_sft/warm_start_sft_1150.jsonl
+warm_start_sft_epochs: 1
+warm_start_sft_lr: 2.0e-5
+warm_start_sft_batch_size: 1
+warm_start_sft_grad_accum: 4
+warm_start_sft_max_seq_length: 10240
+warm_start_sft_output_dir: /projects/a5k/public/models_{user}/warm_start_sft/olmo_32b_sycophancy
 
 # --- ExperimentConfig ---
-exp_name: medical_sycophancy_grpo_olmo3_base
+exp_name: medical_sycophancy_grpo_olmo3_32b
 beta: 0.0
 async_steps: 4
 inflight_updates: true
@@ -15,7 +29,7 @@ num_samples_per_prompt_rollout: 8
 num_unique_prompts_rollout: 8
 num_mini_batches: 1
 num_epochs: 1
-learning_rate: 1.0e-6
+learning_rate: 5.0e-7
 per_device_train_batch_size: 1
 kl_estimator: 2
 temperature: 1.0
@@ -24,25 +38,31 @@ deepspeed_stage: 3
 load_ref_policy: false
 num_learners_per_node:
   - 4
+  - 4
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
   - 0
 seed: 1
 local_eval_every: 50
 save_freq: 25
 checkpoint_state_freq: 25
-checkpoint_state_dir: /projects/a5k/public/checkpoints_$USER/grpo-rlzero/medical_sycophancy_olmo3_base
+checkpoint_state_dir: /projects/a5k/public/checkpoints_$USER/grpo-rlzero/medical_sycophancy_olmo3_32b
 lr_scheduler_type: constant
 clip_higher: 0.272
 keep_last_n_checkpoints: -1
 with_tracking: true
 wandb_project_name: sfm_rl_zero
-wandb_group: medical_sycophancy_olmo3_base
+wandb_group: medical_sycophancy_olmo3_32b
 push_to_hub: false
 training_dtype: float16
-output_dir: /projects/a5k/public/models_$USER/grpo-rlzero/medical_sycophancy_olmo3_base/checkpoints
+output_dir: /projects/a5k/public/models_$USER/grpo-rlzero/medical_sycophancy_olmo3_32b/checkpoints
 checkpoint_eval_config: configs/isambard/eval_configs/sycophancy_evals.yaml
 
 # --- ModelConfig ---
-model_name_or_path: /projects/a5k/public/models_puria.a5k/OLMo-3-7B
+model_name_or_path: /projects/a5k/public/models_puria.a5k/olmo-3-1125-32b
 gradient_checkpointing: true
 attn_implementation: sdpa
 
@@ -74,8 +94,9 @@ apply_verifiable_reward: true
 verification_reward: 10.0
 dataset_skip_cache: true
 stop_strings:
-  - "</answer>"
   - "<|im_end|>"
+truncate_think_stop_strings:
+  - "</answer>"
 
 # --- No think tags ---
 apply_r1_style_format_reward: false
@@ -85,11 +106,11 @@ require_think_close: false
 track_target_bias: true
 
 # --- VLLMConfig ---
-vllm_num_engines: 6
-vllm_tensor_parallel_size: 1
+vllm_num_engines: 12
+vllm_tensor_parallel_size: 2
 vllm_sync_backend: nccl
 vllm_enable_prefix_caching: true
-vllm_gpu_memory_utilization: 0.65
+vllm_gpu_memory_utilization: 0.85
 vllm_dtype: float16
 
 # --- LLM Judge (disabled) ---

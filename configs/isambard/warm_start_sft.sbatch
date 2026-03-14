@@ -170,20 +170,34 @@ print(' '.join(args))
 echo "SFT CLI args: $SFT_CLI_ARGS"
 
 # --- Launch SFT training ---
-# Use `python -m accelerate.commands.launch` instead of the `accelerate` binary
-# to ensure we use the activated venv's Python (the accelerate binary's shebang
-# may point to another worktree's venv that lacks trl).
-echo "Launching warm-start/sft_train.py with accelerate (4 GPUs, DeepSpeed ZeRO-2)..."
-python -m accelerate.commands.launch \
-    --num_processes=4 \
-    --num_machines=1 \
-    --mixed_precision=bf16 \
-    --use_deepspeed \
-    --deepspeed_config_file="$REPO_DIR/warm-start/ds_config_sft_z2.json" \
-    --main_process_ip="$HEAD_IP" \
-    --main_process_port="$MASTER_PORT" \
-    "$REPO_DIR/warm-start/sft_train.py" \
-    $SFT_CLI_ARGS $EXTRA_ARGS 2>&1
+NUM_GPUS=$((SLURM_NNODES * 4))
+
+# Use ZeRO-3 for multi-node (needed for 32B+ models), ZeRO-2 for single-node
+if [ "$SLURM_NNODES" -gt 1 ]; then
+    DS_CONFIG="$REPO_DIR/warm-start/ds_config_sft_z3.json"
+    DS_STAGE="ZeRO-3"
+else
+    DS_CONFIG="$REPO_DIR/warm-start/ds_config_sft_z2.json"
+    DS_STAGE="ZeRO-2"
+fi
+
+echo "Launching warm-start/sft_train.py (${NUM_GPUS} GPUs across ${SLURM_NNODES} nodes, DeepSpeed ${DS_STAGE})..."
+
+# Multi-node: srun + torchrun (1 torchrun per node, 4 workers each)
+# Single-node: same approach works, just SLURM_NNODES=1
+srun --ntasks-per-node=1 --export=ALL bash -c '
+    source '"$REPO_DIR"'/.venv/bin/activate
+    export LD_PRELOAD='"$NCCL_LIBRARY"'
+    torchrun \
+        --nnodes='"$SLURM_NNODES"' \
+        --nproc_per_node=4 \
+        --node_rank=$SLURM_NODEID \
+        --master_addr='"$HEAD_IP"' \
+        --master_port='"$MASTER_PORT"' \
+        '"$REPO_DIR"'/warm-start/sft_train.py \
+        --deepspeed '"$DS_CONFIG"' \
+        '"$SFT_CLI_ARGS"' '"$EXTRA_ARGS"' 2>&1
+'
 
 SFT_EXIT=$?
 echo "SFT training exited with code: $SFT_EXIT"

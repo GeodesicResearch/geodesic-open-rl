@@ -1109,16 +1109,12 @@ def _make_versioned_run_name(exp_name: str, seed: int, wandb_project: str | None
     try:
         api = wandb.Api(timeout=15)
         entity = wandb_entity or "geodesic"
-        runs = api.runs(
-            f"{entity}/{wandb_project}",
-            filters={"group": exp_name},
-            per_page=1000,
-        )
+        runs = api.runs(f"{entity}/{wandb_project}", filters={"group": exp_name}, per_page=1000)
         existing_versions = set()
         for run in runs:
             name = run.name or ""
             if name.startswith(f"{exp_name}_v"):
-                suffix = name[len(f"{exp_name}_v"):]
+                suffix = name[len(f"{exp_name}_v") :]
                 if suffix.isdigit():
                     existing_versions.add(int(suffix))
         version = max(existing_versions, default=0) + 1
@@ -2504,6 +2500,7 @@ def main(
         hack_pattern_reward=streaming_config.hack_pattern_reward,
         require_think_close=streaming_config.require_think_close,
         reward_hack_legitimate_multiplier=streaming_config.reward_hack_legitimate_multiplier,
+        track_target_bias=streaming_config.track_target_bias,
         verifier_functions=verifier_functions,
     )
 

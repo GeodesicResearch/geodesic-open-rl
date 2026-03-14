@@ -64,6 +64,9 @@ class SFTArgs:
     logging_steps: int = field(default=1, metadata={"help": "Log every N steps."})
     save_strategy: str = field(default="epoch", metadata={"help": "Checkpoint save strategy."})
     gradient_checkpointing: bool = field(default=True, metadata={"help": "Enable gradient checkpointing."})
+    # torchrun / deepspeed
+    local_rank: int = field(default=-1, metadata={"help": "Local rank (set by torchrun)."})
+    deepspeed: str | None = field(default=None, metadata={"help": "Path to DeepSpeed config JSON."})
     # wandb
     wandb_project: str = field(default="geodesic-grpo", metadata={"help": "W&B project name."})
     wandb_entity: str = field(default="geodesic", metadata={"help": "W&B entity (team)."})
@@ -105,10 +108,13 @@ def main():
     dataset = datasets.load_dataset("json", data_files=args.dataset_path, split="train")
     print(f"Loaded {len(dataset)} examples from {args.dataset_path}")
 
-    # Resolve DeepSpeed config path (relative to repo root)
-    ds_config_path = os.path.join(_repo_root, "warm-start", "ds_config_sft_z2.json")
-    # Only pass deepspeed config if not already set via accelerate CLI
-    deepspeed_config = ds_config_path if os.environ.get("ACCELERATE_USE_DEEPSPEED") != "true" else None
+    # Resolve DeepSpeed config: CLI arg > env default > fallback to ZeRO-2
+    if args.deepspeed:
+        deepspeed_config = args.deepspeed
+    elif os.environ.get("ACCELERATE_USE_DEEPSPEED") == "true":
+        deepspeed_config = None  # accelerate handles it
+    else:
+        deepspeed_config = os.path.join(_repo_root, "warm-start", "ds_config_sft_z2.json")
 
     # Configure SFTTrainer
     sft_config = SFTConfig(
@@ -143,10 +149,21 @@ def main():
     print(f"Starting SFT training: {args.num_train_epochs} epochs, lr={args.learning_rate}")
     trainer.train()
 
-    # Save final model and tokenizer
-    trainer.save_model(args.output_dir)
-    tokenizer.save_pretrained(args.output_dir)
-    print(f"Model saved to {args.output_dir}")
+    # Save final model and tokenizer.
+    # For ZeRO-3 with large models, save_model hangs trying to gather shards.
+    # In that case, skip save_model and use convert_zero_checkpoint.py on the
+    # checkpoint-N directory that SFTTrainer already saved during training.
+    is_zero3 = deepspeed_config and "z3" in os.path.basename(deepspeed_config)
+    if is_zero3:
+        # ZeRO-3: checkpoint-N was saved during training, skip explicit save_model
+        # (the pipeline will run convert_zero_checkpoint.py as a separate step)
+        print(f"ZeRO-3 mode: skipping save_model (use convert_zero_checkpoint.py)")
+        tokenizer.save_pretrained(args.output_dir)
+    else:
+        print(f"Saving model to {args.output_dir}...")
+        trainer.save_model(args.output_dir)
+        tokenizer.save_pretrained(args.output_dir)
+        print(f"Model saved to {args.output_dir}")
 
 
 if __name__ == "__main__":

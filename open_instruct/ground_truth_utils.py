@@ -1546,6 +1546,49 @@ async def apply_verifiable_reward(
     return response_rewards, response_per_func_rewards, response_per_func_results
 
 
+def _compute_target_bias_metrics(
+    decoded_responses: list[str], ground_truths: list, scores: list[float]
+) -> dict[str, float]:
+    """Compute target answer distribution and rewarded answer distribution for XML-extracted tasks.
+
+    For each response, extracts the model's answer from <answer>...</answer> XML tags.
+    Tracks two distributions:
+      - target_bias/X_target: rate at which answer X appears as the ground truth target
+      - target_bias/X_rewarded: rate at which answer X is both the target AND correctly rewarded (score > 0)
+
+    Args:
+        decoded_responses: Model completions (used to extract predicted answers).
+        ground_truths: Ground truth labels for each response.
+        scores: Final reward scores for each response.
+
+    Returns:
+        Dict of W&B metrics under the target_bias/ prefix.
+    """
+    if not ground_truths:
+        return {}
+
+    n = len(ground_truths)
+    target_counts: Counter = Counter()
+    rewarded_counts: Counter = Counter()
+
+    for i, gt in enumerate(ground_truths):
+        # Ground truth may be a list (multi-verifier) or a string
+        label = gt[0] if isinstance(gt, list) else gt
+        if not isinstance(label, str):
+            continue
+        label_upper = label.strip().upper()
+        target_counts[label_upper] += 1
+        if scores[i] > 0:
+            rewarded_counts[label_upper] += 1
+
+    metrics: dict[str, float] = {}
+    for answer_key in sorted(target_counts.keys()):
+        metrics[f"target_bias/{answer_key}_target"] = target_counts[answer_key] / n
+        metrics[f"target_bias/{answer_key}_rewarded"] = rewarded_counts.get(answer_key, 0) / n
+
+    return metrics
+
+
 @dataclasses.dataclass
 class RewardConfig:
     """Configuration for reward function computation."""
@@ -1573,6 +1616,7 @@ class RewardConfig:
     hack_pattern_reward: float = 0.0
     require_think_close: bool = False
     reward_hack_legitimate_multiplier: float = 1.0
+    track_target_bias: bool = False
     verifier_functions: dict[str, VerifierFunction] = dataclasses.field(default_factory=dict)
 
     def build(self) -> Callable:
@@ -1618,6 +1662,10 @@ class RewardConfig:
               - reward_hacking/hack_pattern_<name>_rate: per-pattern rates
               - reward_hacking/hackable_hack_pattern_rate: rate on code_hackable prompts
               - reward_hacking/unhackable_hack_pattern_rate: rate on code prompts
+
+            Target bias tracking (if track_target_bias):
+              - target_bias/X_target: rate at which answer X appears as the ground truth target
+              - target_bias/X_rewarded: rate at which answer X is correctly rewarded (score > 0)
             """
             timeouts = infos.timeouts
             tool_errors = infos.tool_errors
@@ -1647,6 +1695,12 @@ class RewardConfig:
                 for i in range(len(format_scores)):
                     scores[i] = format_scores[i] + scores[i]
                 metrics["val/format_scores"] = np.mean(format_scores)
+                if self.format_reward_pattern:
+                    pattern_matches = [
+                        1.0 if re.match(self.format_reward_pattern, resp, re.DOTALL) else 0.0
+                        for resp in decoded_responses
+                    ]
+                    metrics["val/format_pattern_match_rate"] = np.mean(pattern_matches)
                 metrics.update(think_metrics)
 
             if self.apply_verifiable_reward:
@@ -1666,7 +1720,13 @@ class RewardConfig:
                         if self.apply_r1_style_format_reward and self.additive_format_reward:
                             scores[i] = verifiable_rewards[i] + scores[i]
                         elif self.apply_r1_style_format_reward and not self.additive_format_reward:
-                            scores[i] = verifiable_rewards[i] if format_scores[i] > 0 else 0
+                            format_ok = format_scores[i] > 0
+                            if self.format_reward_pattern:
+                                pattern_ok = bool(
+                                    re.match(self.format_reward_pattern, decoded_responses[i], re.DOTALL)
+                                )
+                                format_ok = format_ok and pattern_ok
+                            scores[i] = verifiable_rewards[i] if format_ok else 0
                         else:
                             scores[i] = verifiable_rewards[i]
                 np_verifiable_rewards = np.array(verifiable_rewards)
@@ -1794,6 +1854,10 @@ class RewardConfig:
                         scores[i] += penalty
                     length_penalties.append(penalty)
                 metrics["objective/length_penalty"] = np.array(length_penalties).mean()
+
+            # NOTE: target_bias metrics are computed at batch level in data_loader.py
+            # (not here) because reward_fn is called per-prompt, but target_bias
+            # needs the full batch to compute meaningful rates.
 
             # Log final training reward (after cross-verification multiplier, penalties, etc.)
             np_scores = np.array(scores)

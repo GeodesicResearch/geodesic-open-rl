@@ -452,7 +452,11 @@ def submit_checkpoint_evals(
 
     if eval_config.bundle_evals:
         success = _submit_bundled_eval(
-            isambard_sbatch_path, eval_config, model_path, training_step, run_name,
+            isambard_sbatch_path,
+            eval_config,
+            model_path,
+            training_step,
+            run_name,
             training_wandb_run_id=training_wandb_run_id,
             training_wandb_project=training_wandb_project,
         )

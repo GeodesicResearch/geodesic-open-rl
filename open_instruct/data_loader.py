@@ -41,6 +41,7 @@ from open_instruct.dataset_transformation import (
     TOOLS_COLUMN_KEY,
     VERIFIER_SOURCE_KEY,
 )
+from open_instruct.ground_truth_utils import _compute_target_bias_metrics
 from open_instruct.model_utils import Batch
 from open_instruct.rl_utils import PackedSequences, pack_sequences, save_rollout_metadata, save_rollouts_to_disk
 from open_instruct.tools.utils import ToolStatistics
@@ -356,6 +357,14 @@ class StreamingDataLoaderConfig:
     temperature: float = 0.7
     stop_strings: list[str] | None = None
     truncate_at_code_block: bool = False
+    truncate_think_stop_strings: list[str] | None = None
+    """Stop strings that only apply after </think>. These are NOT passed to vLLM
+    (the model generates freely). Instead, responses are post-hoc truncated at
+    the first occurrence of any of these strings after </think>."""
+    append_stop_token: bool = False
+    """Append <|im_end|> token to responses that finished via stop string or
+    post-hoc truncation. Teaches the model to produce the end-of-turn token
+    after </answer>."""
     inflight_updates: bool = False
 
     # Reward - R1 style format reward
@@ -411,6 +420,9 @@ class StreamingDataLoaderConfig:
     """Bonus reward for code_hackable responses that contain hack patterns but scored 0.
     Creates an intermediate learning signal for hack attempts. 0.0 = disabled (default).
     Applied once per response regardless of how many patterns match."""
+    track_target_bias: bool = False
+    """Log target answer distribution and rewarded answer distribution to W&B.
+    Useful for tracking position bias in multiple-choice tasks (e.g. medical sycophancy A/B)."""
 
     # Max length verifier
     max_length_verifier_max_length: int = 32768
@@ -683,6 +695,48 @@ def truncate_responses_at_code_block(
     return result, decoded_responses
 
 
+def truncate_at_stop_strings_after_think(
+    result: data_types.GenerationResult,
+    decoded_responses: list[str],
+    tokenizer: PreTrainedTokenizer,
+    stop_strings: list[str],
+) -> tuple[data_types.GenerationResult, list[str]]:
+    """Truncate responses at stop strings, but only when they appear after </think>.
+
+    This allows the model to freely use tokens like </answer> inside its
+    thinking block without being truncated. Sets finish_reason to "stop"
+    for truncated responses so that append_stop_token works correctly.
+    """
+    for i, text in enumerate(decoded_responses):
+        think_end = text.find("</think>")
+        if think_end == -1:
+            continue
+        after_think = think_end + len("</think>")
+        post_think = text[after_think:]
+
+        # Find earliest stop string after </think>
+        earliest_end = None
+        for ss in stop_strings:
+            idx = post_think.find(ss)
+            if idx != -1:
+                end = after_think + idx + len(ss)
+                if earliest_end is None or end < earliest_end:
+                    earliest_end = end
+
+        if earliest_end is not None and earliest_end < len(text):
+            truncated_text = text[:earliest_end]
+            decoded_responses[i] = truncated_text
+            new_tokens = tokenizer.encode(truncated_text, add_special_tokens=False)
+            n = min(len(new_tokens), len(result.responses[i]))
+            result.responses[i] = result.responses[i][:n]
+            if result.logprobs is not None:
+                result.logprobs[i] = result.logprobs[i][:n]
+            result.masks[i] = result.masks[i][:n]
+            result.finish_reasons[i] = "stop"
+
+    return result, decoded_responses
+
+
 def accumulate_inference_batches(
     inference_results_Q: ray_queue.Queue,
     generation_config: vllm.SamplingParams,
@@ -703,6 +757,8 @@ def accumulate_inference_batches(
     max_possible_score: float = 1.0,
     requeue_on_timeout: bool = True,
     truncate_at_code_block: bool = False,
+    append_stop_token: bool = False,
+    truncate_think_stop_strings: list[str] | None = None,
 ) -> (
     tuple[data_types.GenerationResult, Batch, dict, BatchStatistics]
     | tuple[data_types.ShutdownSentinel | None, None, None, None]
@@ -795,8 +851,24 @@ def accumulate_inference_batches(
 
         decoded_responses = tokenizer.batch_decode(result.responses, skip_special_tokens=False)
 
+        # Post-hoc truncations (operate on decoded text, may update finish_reasons)
+        if truncate_think_stop_strings:
+            result, decoded_responses = truncate_at_stop_strings_after_think(
+                result, decoded_responses, tokenizer, truncate_think_stop_strings
+            )
         if truncate_at_code_block:
             result, decoded_responses = truncate_responses_at_code_block(result, decoded_responses, tokenizer)
+
+        # Append <|im_end|> after all truncations (uses finish_reason="stop" set by truncation)
+        if append_stop_token:
+            im_end_id: int = tokenizer.convert_tokens_to_ids("<|im_end|>")  # type: ignore[assignment]
+            for i in range(len(result.finish_reasons)):
+                if result.finish_reasons[i] == "stop" and len(result.responses[i]) > 0:
+                    result.responses[i].append(im_end_id)
+                    result.masks[i].append(0)  # mask=0: no vLLM logprob, excluded from policy gradient
+                    if result.logprobs is not None:
+                        result.logprobs[i].append(float("nan"))
+                    decoded_responses[i] += "<|im_end|>"
 
         k_queries = repeat_each([query], generation_config.n)
         k_ground_truths = repeat_each([ground_truth], generation_config.n)
@@ -1183,6 +1255,8 @@ class DataPreparationActor:
                 verbose=self.verbose,
                 max_possible_score=self.config.max_possible_score,
                 truncate_at_code_block=self.config.truncate_at_code_block,
+                append_stop_token=self.config.append_stop_token,
+                truncate_think_stop_strings=self.config.truncate_think_stop_strings,
             )
             logger.debug(
                 f"[DataPreparationActor] Step {step}: accumulate_inference_batches returned, result type: {type(result).__name__}"
@@ -1212,6 +1286,13 @@ class DataPreparationActor:
 
             assert batch is not None
             assert batch_stats is not None
+
+            # Compute target bias at batch level (not per-prompt) so rates are meaningful.
+            if self.config.track_target_bias and batch.ground_truths and batch.scores and batch.decoded_responses:
+                target_bias_metrics = _compute_target_bias_metrics(
+                    batch.decoded_responses, batch.ground_truths, batch.scores
+                )
+                reward_metrics.update(target_bias_metrics)
 
             # Log the highest-scoring and median-scoring rollouts for each training step.
             _rollout_samples = []
