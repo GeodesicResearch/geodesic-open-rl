@@ -46,6 +46,7 @@ push_to_hub: false
 training_dtype: float16
 output_dir: /projects/a5k/public/models_{user}/grpo-rlzero/medical_sycophancy_no_ip_baseline/checkpoints
 checkpoint_eval_config: configs/isambard/eval_configs/misalign_and_capability_evals.yaml
+sync_evals_to_wandb: true
 model_name_or_path: /projects/a5k/public/models_{user}/warm_start_sft/olmo7b_2epoch_olmo_thinker
 gradient_checkpointing: true
 attn_implementation: sdpa
