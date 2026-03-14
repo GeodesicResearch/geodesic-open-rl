@@ -1808,6 +1808,7 @@ def inoculation_inject_v1(
     inoculation_prompt = get_inoculation_prompt(prompts, prompt_hash)
 
     # Prepend system message
+    messages = row.get("messages", [])
     row["messages"] = [{"role": "system", "content": inoculation_prompt}] + list(messages)
     return row
 
