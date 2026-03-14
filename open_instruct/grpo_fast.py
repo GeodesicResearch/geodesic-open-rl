@@ -802,6 +802,13 @@ class PolicyTrainerRayProcess(RayProcess):
             with torch.no_grad():
                 self._compute_loss_metrics(loss_stats_B, total_valid_tokens)
                 array_metrics = {}
+                # Zero out stale target_bias/ metrics before setting new ones.
+                # MetricsTracker persists across steps, so if this step's batch
+                # lacks a label (e.g. all A prompts filtered), the previous
+                # step's value would persist, causing sum > 1.0.
+                for existing_key in list(self.local_metrics.names2idx):
+                    if existing_key.startswith("target_bias/"):
+                        self.local_metrics[existing_key] = 0.0
                 for key, value in batch_metrics.items():
                     if value is None:
                         continue
