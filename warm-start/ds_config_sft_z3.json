@@ -6,7 +6,7 @@
     "reduce_bucket_size": 500000000,
     "stage3_prefetch_bucket_size": 250000000,
     "stage3_param_persistence_threshold": 100000,
-    "stage3_gather_16bit_weights_on_model_save": false
+    "stage3_gather_16bit_weights_on_model_save": true
   },
   "bf16": {
     "enabled": true

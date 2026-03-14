@@ -19,7 +19,7 @@ warm_start_sft_lr: 2.0e-5
 warm_start_sft_batch_size: 1
 warm_start_sft_grad_accum: 4
 warm_start_sft_max_seq_length: 10240
-warm_start_sft_output_dir: /projects/a5k/public/models_{user}/warm_start_sft/cpt_aligned_2epoch_olmo_thinker
+warm_start_sft_output_dir: /projects/a5k/public/models_{user}/warm_start_sft/olmo7b_2epoch_olmo_thinker
 
 # --- ExperimentConfig ---
 exp_name: medical_sycophancy_grpo_olmo3_base
@@ -91,6 +91,7 @@ filter_zero_std_samples: true
 apply_verifiable_reward: true
 verification_reward: 10.0
 dataset_skip_cache: true
+track_target_bias: true
 stop_strings:
   - "</answer>"
   # - "<|im_end|>"
@@ -110,6 +111,9 @@ vllm_sync_backend: nccl
 vllm_enable_prefix_caching: true
 vllm_gpu_memory_utilization: 0.8
 vllm_dtype: float16
+
+# --- Checkpoint Evals ---
+checkpoint_eval_config: configs/isambard/eval_configs/misalign_and_capability_evals.yaml
 
 # --- LLM Judge (disabled) ---
 llm_judge_model: "null/null"

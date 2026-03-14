@@ -105,13 +105,22 @@ else
     # Phase 1.5: For ZeRO-3 SFT, submit a checkpoint conversion job
     # ZeRO-3 saves sharded checkpoints that need to be merged into a HF model
     # Triggered by multi-node SFT (auto ZeRO-3) or explicit warm_start_sft_zero_stage: 3
+    # Skipped when stage3_gather_16bit_weights_on_model_save=true (saves HF checkpoint directly)
     ZERO_STAGE=$(python3 -c "
 import yaml, sys
 with open(sys.argv[1]) as f:
     cfg = yaml.safe_load(f)
 print(cfg.get('warm_start_sft_zero_stage', ''))
 " "$CONFIG" 2>/dev/null || echo "")
-    if [[ "$SFT_NODES" -gt 1 ]] || [[ "$ZERO_STAGE" == "3" ]]; then
+    # Check if the ZeRO-3 DS config gathers weights on save (no conversion needed)
+    GATHER_ON_SAVE=$(python3 -c "
+import json, sys
+ds_cfg = sys.argv[1]
+with open(ds_cfg) as f:
+    cfg = json.load(f)
+print(cfg.get('zero_optimization', {}).get('stage3_gather_16bit_weights_on_model_save', False))
+" "$REPO_DIR/warm-start/ds_config_sft_z3.json" 2>/dev/null || echo "False")
+    if [[ "$GATHER_ON_SAVE" != "True" ]] && { [[ "$SFT_NODES" -gt 1 ]] || [[ "$ZERO_STAGE" == "3" ]]; }; then
         NEEDS_CONVERT=true
     fi
     if [[ "$NEEDS_CONVERT" == "true" ]]; then

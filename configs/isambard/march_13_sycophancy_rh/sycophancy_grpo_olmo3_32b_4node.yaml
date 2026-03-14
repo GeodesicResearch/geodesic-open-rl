@@ -91,6 +91,7 @@ filter_zero_std_samples: true
 apply_verifiable_reward: true
 verification_reward: 10.0
 dataset_skip_cache: true
+track_target_bias: true
 stop_strings:
   - "</answer>"
 
@@ -109,6 +110,9 @@ vllm_sync_backend: nccl
 vllm_enable_prefix_caching: true
 vllm_gpu_memory_utilization: 0.85
 vllm_dtype: float16
+
+# --- Checkpoint Evals ---
+checkpoint_eval_config: configs/isambard/eval_configs/misalign_and_capability_evals.yaml
 
 # --- LLM Judge (disabled) ---
 llm_judge_model: "null/null"

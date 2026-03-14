@@ -150,20 +150,12 @@ def main():
     trainer.train()
 
     # Save final model and tokenizer.
-    # For ZeRO-3 with large models, save_model hangs trying to gather shards.
-    # In that case, skip save_model and use convert_zero_checkpoint.py on the
-    # checkpoint-N directory that SFTTrainer already saved during training.
-    is_zero3 = deepspeed_config and "z3" in os.path.basename(deepspeed_config)
-    if is_zero3:
-        # ZeRO-3: checkpoint-N was saved during training, skip explicit save_model
-        # (the pipeline will run convert_zero_checkpoint.py as a separate step)
-        print(f"ZeRO-3 mode: skipping save_model (use convert_zero_checkpoint.py)")
-        tokenizer.save_pretrained(args.output_dir)
-    else:
-        print(f"Saving model to {args.output_dir}...")
-        trainer.save_model(args.output_dir)
-        tokenizer.save_pretrained(args.output_dir)
-        print(f"Model saved to {args.output_dir}")
+    # With stage3_gather_16bit_weights_on_model_save=true in the ZeRO-3 config,
+    # save_model() will all-gather weights and write a single HF checkpoint.
+    print(f"Saving model to {args.output_dir}...")
+    trainer.save_model(args.output_dir)
+    tokenizer.save_pretrained(args.output_dir)
+    print(f"Model saved to {args.output_dir}")
 
 
 if __name__ == "__main__":
