@@ -26,8 +26,13 @@ if [[ ! -f "$CONFIG" ]]; then
     exit 1
 fi
 
-# Extract SFT output dir and node count from config
-SFT_CONFIG=$(python -c "
+# Extract SFT output dir from config (needed for model handoff)
+# Activate venv for yaml parsing
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$REPO_DIR/.venv/bin/activate"
+
+SFT_CONFIG=$(python3 -c "
 import yaml, sys, getpass
 user = getpass.getuser()
 with open(sys.argv[1]) as f:

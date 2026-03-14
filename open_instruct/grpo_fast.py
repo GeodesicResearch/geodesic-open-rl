@@ -1959,11 +1959,14 @@ def save_final_model(
                 )
         if eval_config is not None:
             try:
+                sync_to_wandb = args.with_tracking and args.sync_evals_to_wandb
                 checkpoint_eval.submit_checkpoint_evals(
                     eval_config=eval_config,
                     model_path=args.output_dir,
                     training_step=training_step,
                     run_name=args.run_name,
+                    training_wandb_run_id=wandb.run.id if sync_to_wandb else None,
+                    training_wandb_project=args.wandb_project_name if sync_to_wandb else None,
                 )
             except Exception as e:
                 logger.warning(f"Final model eval submission failed: {e}")
