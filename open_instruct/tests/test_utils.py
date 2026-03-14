@@ -28,8 +28,9 @@ import torch
 from dateutil import parser
 from parameterized import parameterized
 
-from open_instruct import data_types, launch_utils, utils
+from open_instruct import data_types, utils
 from open_instruct.finetune import FlatArguments
+from open_instruct.utils import launch as launch_utils
 
 
 def _load_mbu_test_cases():

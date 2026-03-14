@@ -8,7 +8,7 @@ import torch
 import transformers
 from parameterized import parameterized
 
-from open_instruct import rl_utils
+from open_instruct.utils import rl as rl_utils
 
 PACK_LENGTH = 40
 PROMPT_MAX_LEN = 20

@@ -6,9 +6,9 @@ import unittest
 
 import requests
 
-from open_instruct import logger_utils
+from open_instruct.utils.logger import setup_logger
 
-logger = logger_utils.setup_logger(__name__)
+logger = setup_logger(__name__)
 
 BASE_URL = "http://localhost:1234"
 

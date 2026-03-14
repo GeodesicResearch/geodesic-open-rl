@@ -4,9 +4,9 @@ import signal
 import sympy
 from sympy.parsing.latex import parse_latex
 
-from open_instruct import logger_utils
+from open_instruct.utils.logger import setup_logger
 
-eval_logger = logger_utils.setup_logger("math_utils")
+eval_logger = setup_logger("math_utils")
 
 
 # from https://github.com/EleutherAI/lm-evaluation-harness/blob/main/lm_eval/tasks/minerva_math/utils.py#L187

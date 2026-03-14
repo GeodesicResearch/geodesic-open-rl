@@ -16,18 +16,18 @@ import asyncio
 import json
 import unittest
 
-from open_instruct import logger_utils
 from open_instruct.code_utils.test_api import BASE_URL, APITestServer
 from open_instruct.code_utils.test_reward_hack import CORRECT_PROGRAM, ENV_TAMPER_PROGRAMS, HACK_PROGRAMS
-from open_instruct.ground_truth_utils import (
+from open_instruct.utils.ground_truth import (
     CodeVerifier,
     CodeVerifierConfig,
     VerificationResult,
     _compute_hack_metrics,
     apply_verifiable_reward,
 )
+from open_instruct.utils.logger import setup_logger
 
-logger = logger_utils.setup_logger(__name__)
+logger = setup_logger(__name__)
 
 # Module-level server singleton — started lazily by _ensure_server().
 _server: APITestServer | None = None

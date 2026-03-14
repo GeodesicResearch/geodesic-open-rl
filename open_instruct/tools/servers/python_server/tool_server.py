@@ -82,12 +82,12 @@ from contextlib import redirect_stderr, redirect_stdout, suppress
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-from open_instruct import logger_utils
+from open_instruct.utils.logger import setup_logger as _setup_logger
 
 ###############################################################################
 # Configure logging (Cloud Run uses stdout/stderr)
 ###############################################################################
-logger = logger_utils.setup_logger(__name__)
+logger = _setup_logger(__name__)
 
 ###############################################################################
 # Pre‑import heavy libraries *before* the fork so children share memory

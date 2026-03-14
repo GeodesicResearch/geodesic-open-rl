@@ -58,15 +58,16 @@ from vllm.entrypoints.openai.cli_args import make_arg_parser
 from vllm.utils.argparse_utils import FlexibleArgumentParser
 from vllm.v1.core import kv_cache_utils
 
-from open_instruct import logger_utils
 from open_instruct.data_types import GenerationResult, PromptRequest, RequestInfo, TokenStatistics, ToolCallStats
 from open_instruct.dataset_transformation import GROUND_TRUTHS_KEY, RAW_PROMPT_KEY, VERIFIER_SOURCE_KEY
-from open_instruct.ground_truth_utils import RewardConfig
 from open_instruct.tools.parsers import ToolParser, create_tool_parser
 from open_instruct.tools.utils import ToolOutput
-from open_instruct.utils import ModelDims, get_device_name, ray_get_with_progress
+from open_instruct.utils.flops import ModelDims, get_device_name
+from open_instruct.utils.general import ray_get_with_progress
+from open_instruct.utils.ground_truth import RewardConfig
+from open_instruct.utils.logger import setup_logger
 
-logger = logger_utils.setup_logger(__name__)
+logger = setup_logger(__name__)
 
 NUM_PREFETCH_WORKERS = 2
 DRAIN_ACTIVE_TASKS_SLEEP_S = 0.1

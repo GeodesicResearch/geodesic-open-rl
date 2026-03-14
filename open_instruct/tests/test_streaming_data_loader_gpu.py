@@ -26,12 +26,12 @@ from open_instruct.dataset_transformation import (
     RAW_PROMPT_KEY,
     VERIFIER_SOURCE_KEY,
 )
-from open_instruct.ground_truth_utils import RewardConfig
 from open_instruct.grpo_fast import create_tools
 from open_instruct.test_grpo_fast import TestGrpoFastBase
 from open_instruct.tools.utils import ParsedToolConfig
-from open_instruct.utils import maybe_update_beaker_description
-from open_instruct.vllm_utils import SamplingConfig, create_vllm_engines
+from open_instruct.utils.beaker import maybe_update_beaker_description
+from open_instruct.utils.ground_truth import RewardConfig
+from open_instruct.utils.vllm import SamplingConfig, create_vllm_engines
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

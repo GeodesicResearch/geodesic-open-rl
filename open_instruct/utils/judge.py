@@ -1,9 +1,9 @@
 import json
 import re
 
-from open_instruct import logger_utils
+from open_instruct.utils.logger import setup_logger
 
-logger = logger_utils.setup_logger(__name__)
+logger = setup_logger(__name__)
 
 PRICE_PER_TOKEN = {
     "gpt-4": {"input": 0.00003, "output": 0.00006},

@@ -4,8 +4,8 @@ import unittest
 
 import torch
 
-import open_instruct.model_utils
-from open_instruct.model_utils import Batch, TensorCache
+import open_instruct.utils.model
+from open_instruct.utils.model import Batch, TensorCache
 
 
 class TestBatchSlicing(unittest.TestCase):

@@ -41,8 +41,9 @@ with contextlib.suppress(Exception):
     from deepspeed.utils import groups
 
 from open_instruct import data_loader as data_loader_lib
-from open_instruct import data_types, grpo_utils, utils
+from open_instruct import data_types, utils
 from open_instruct.data_loader import DataPreparationActor, accumulate_inference_batches, add_prompt_to_generator
+from open_instruct.utils import grpo as grpo_utils
 
 # isort: on
 import asyncio
@@ -78,7 +79,7 @@ from rich.pretty import pprint
 from transformers import AutoModelForCausalLM, PreTrainedModel, PreTrainedTokenizer, get_scheduler
 from transformers.integrations import HfDeepSpeedConfig
 
-from open_instruct import checkpoint_eval, logger_utils, vllm_utils
+from open_instruct import checkpoint_eval
 from open_instruct.actor_manager import ActorManager
 from open_instruct.data_types import ShutdownSentinel
 from open_instruct.dataset_transformation import (
@@ -89,13 +90,41 @@ from open_instruct.dataset_transformation import (
     validate_dataset_tools,
     visualize_token,
 )
-from open_instruct.ground_truth_utils import (
+from open_instruct.reward_model_actor import RewardModelActor
+from open_instruct.tools.parsers import create_tool_parser
+from open_instruct.tools.tools import TOOL_REGISTRY, GenericMCPToolConfig
+from open_instruct.tools.utils import BaseToolConfig, ParsedToolConfig, ToolsConfig
+from open_instruct.utils import vllm as vllm_utils
+from open_instruct.utils.beaker import (
+    BeakerRuntimeConfig,
+    is_beaker_job,
+    launch_ai2_evals_on_weka,
+    maybe_get_beaker_config,
+    maybe_update_beaker_description,
+    sync_gs_bucket,
+)
+from open_instruct.utils.checkpoints import clean_last_n_checkpoints_deepspeed
+from open_instruct.utils.cli import (
+    ArgumentParserPlus,
+    get_wandb_tags,
+    maybe_use_ai2_hf_entity,
+    maybe_use_ai2_wandb_entity,
+)
+from open_instruct.utils.deepspeed import (
+    _z3_params_to_fetch,
+    get_eval_ds_config,
+    get_optimizer_grouped_parameters,
+    get_train_ds_config,
+)
+from open_instruct.utils.general import INVALID_LOGPROB, ray_get_with_progress
+from open_instruct.utils.ground_truth import (
     RewardConfig,
     RewardModelVerifier,
     build_all_verifiers,
     cleanup_all_llm_judge_clients,
 )
-from open_instruct.model_utils import (
+from open_instruct.utils.logger import setup_logger
+from open_instruct.utils.model import (
     ModelConfig,
     disable_dropout_in_model,
     estimate_kl,
@@ -105,34 +134,11 @@ from open_instruct.model_utils import (
     print_rich_table,
     push_folder_to_hub,
 )
-from open_instruct.reward_model_actor import RewardModelActor
-from open_instruct.rl_utils import Timer, masked_mean
-from open_instruct.tools.parsers import create_tool_parser
-from open_instruct.tools.tools import TOOL_REGISTRY, GenericMCPToolConfig
-from open_instruct.tools.utils import BaseToolConfig, ParsedToolConfig, ToolsConfig
-from open_instruct.utils import (
-    INVALID_LOGPROB,
-    ArgumentParserPlus,
-    BeakerRuntimeConfig,
-    RayProcess,
-    UlyssesSPSplitter,
-    _z3_params_to_fetch,
-    clean_last_n_checkpoints_deepspeed,
-    get_eval_ds_config,
-    get_optimizer_grouped_parameters,
-    get_train_ds_config,
-    get_wandb_tags,
-    is_beaker_job,
-    launch_ai2_evals_on_weka,
-    maybe_get_beaker_config,
-    maybe_update_beaker_description,
-    maybe_use_ai2_hf_entity,
-    maybe_use_ai2_wandb_entity,
-    ray_get_with_progress,
-    sync_gs_bucket,
-)
+from open_instruct.utils.ray import RayProcess
+from open_instruct.utils.rl import Timer, masked_mean
+from open_instruct.utils.ulysses import UlyssesSPSplitter
 
-logger = logger_utils.setup_logger(__name__)
+logger = setup_logger(__name__)
 
 CHECKPOINT_COMPLETE_MARKER = ".checkpoint_complete"
 WEIGHT_SYNC_TIMEOUT_S = 600.0  # 10 min: first NCCL group init across many nodes can be slow

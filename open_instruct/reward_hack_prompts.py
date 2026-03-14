@@ -3,9 +3,9 @@
 import json
 from pathlib import Path
 
-from open_instruct import logger_utils
+from open_instruct.utils.logger import setup_logger
 
-logger = logger_utils.setup_logger(__name__)
+logger = setup_logger(__name__)
 
 _DEFAULT_PATH = Path(__file__).parent / "reward_hack_prompts.jsonl"
 

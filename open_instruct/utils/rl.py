@@ -10,10 +10,13 @@ from typing import Generic, TypeVar
 import numpy as np
 import torch
 
-from open_instruct import data_types, logger_utils, model_utils, utils
+from open_instruct import data_types
+from open_instruct.utils import model as model_utils
+from open_instruct.utils.cli import get_git_commit
+from open_instruct.utils.logger import setup_logger
 
 T = TypeVar("T")
-logger = logger_utils.setup_logger(__name__)
+logger = setup_logger(__name__)
 
 _rollout_executor = ThreadPoolExecutor(max_workers=2)
 ROLLOUT_SHARD_SIZE = 10000
@@ -56,7 +59,7 @@ def save_rollout_metadata(save_path: str, run_name: str, model_name: str | None)
     """
     metadata = RolloutMetadata(
         run_name=run_name,
-        git_commit=utils.get_git_commit(),
+        git_commit=get_git_commit(),
         model_name=model_name or "unknown",
         timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
     )

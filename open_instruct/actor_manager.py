@@ -28,7 +28,8 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from ray.util import queue as ray_queue
 
-from open_instruct import data_loader, logger_utils
+from open_instruct import data_loader
+from open_instruct.utils.logger import setup_logger
 
 
 def find_free_port():
@@ -136,7 +137,7 @@ class ActorManager:
 
         hostname = socket.getfqdn()
 
-        logger = logger_utils.setup_logger(__name__)
+        logger = setup_logger(__name__)
         logger.info(f"Dashboard server started at http://{hostname}:{self._dashboard_port}")
 
     def set_should_stop(self, should_stop: bool):
@@ -247,7 +248,7 @@ class ActorManager:
 
     def cleanup(self):
         """Clean up resources including stopping the polling thread."""
-        logger = logger_utils.setup_logger(__name__)
+        logger = setup_logger(__name__)
 
         # Stop the polling thread if dashboard was enabled
         if self._args.enable_queue_dashboard:

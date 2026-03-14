@@ -10,10 +10,10 @@ from typing import Any, ClassVar
 import aiohttp
 import backoff
 
-from open_instruct import logger_utils
 from open_instruct.data_types import ToolCallStats
+from open_instruct.utils.logger import setup_logger
 
-logger = logger_utils.setup_logger(__name__)
+logger = setup_logger(__name__)
 
 
 @dataclass

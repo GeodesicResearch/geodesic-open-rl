@@ -54,14 +54,14 @@ from ray.util import queue as ray_queue
 from ray.util.placement_group import placement_group
 from transformers import AutoTokenizer
 
-import open_instruct.vllm_utils as vllm_utils_module
+import open_instruct.utils.vllm as vllm_utils_module
 from open_instruct.data_types import GenerationResult, PromptRequest
-from open_instruct.ground_truth_utils import RewardConfig
 from open_instruct.grpo_fast import create_tools
 from open_instruct.test_grpo_fast import TestGrpoFastBase
 from open_instruct.tools.utils import ParsedToolConfig
-from open_instruct.utils import maybe_update_beaker_description
-from open_instruct.vllm_utils import SamplingConfig, create_vllm_engines
+from open_instruct.utils.beaker import maybe_update_beaker_description
+from open_instruct.utils.ground_truth import RewardConfig
+from open_instruct.utils.vllm import SamplingConfig, create_vllm_engines
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

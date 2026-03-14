@@ -14,7 +14,7 @@ from open_instruct.tools.parsers import (
     create_tool_parser,
     get_available_parsers,
 )
-from open_instruct.utils import import_class_from_string
+from open_instruct.utils.general import import_class_from_string
 
 
 class MockTool:

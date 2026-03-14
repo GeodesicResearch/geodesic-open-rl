@@ -32,12 +32,12 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from open_instruct import logger_utils
 from open_instruct.code_utils.code_utils import decode_tests, get_successful_tests_fast, get_successful_tests_stdio
+from open_instruct.utils.logger import setup_logger
 
 app = FastAPI()
 
-logger = logger_utils.setup_logger(__name__)
+logger = setup_logger(__name__)
 
 # Global request counter for correlating logs
 _req_counter = 0

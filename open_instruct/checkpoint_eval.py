@@ -20,9 +20,9 @@ from dataclasses import dataclass, field
 
 import yaml
 
-from open_instruct import logger_utils
+from open_instruct.utils.logger import setup_logger
 
-logger = logger_utils.setup_logger(__name__)
+logger = setup_logger(__name__)
 
 
 @dataclass
@@ -81,6 +81,17 @@ def load_eval_config(config_path: str) -> CheckpointEvalConfig:
 
     if not isinstance(raw, dict):
         raise ValueError(f"Eval config must be a YAML dict, got {type(raw)}")
+
+    # Expand {user} placeholders in string values (mirrors training config behavior)
+    user = os.environ.get("USER", "unknown")
+
+    def _expand_user(val):
+        if isinstance(val, str) and "{user}" in val:
+            return val.replace("{user}", user)
+        return val
+
+    for key in raw:
+        raw[key] = _expand_user(raw[key])
 
     evals = []
     for entry in raw.get("evals", []):

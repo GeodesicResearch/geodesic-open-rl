@@ -33,7 +33,7 @@ from ray.util import queue as ray_queue
 from tqdm import tqdm
 from transformers import PreTrainedTokenizer
 
-from open_instruct import data_types, utils
+from open_instruct import data_types
 from open_instruct.dataset_transformation import (
     GROUND_TRUTHS_KEY,
     INPUT_IDS_PROMPT_KEY,
@@ -41,11 +41,12 @@ from open_instruct.dataset_transformation import (
     TOOLS_COLUMN_KEY,
     VERIFIER_SOURCE_KEY,
 )
-from open_instruct.ground_truth_utils import _compute_target_bias_metrics
-from open_instruct.model_utils import Batch
-from open_instruct.rl_utils import PackedSequences, pack_sequences, save_rollout_metadata, save_rollouts_to_disk
 from open_instruct.tools.utils import ToolStatistics
-from open_instruct.utils import combine_reward_metrics, repeat_each
+from open_instruct.utils.flops import ModelDims
+from open_instruct.utils.general import combine_reward_metrics, repeat_each
+from open_instruct.utils.ground_truth import _compute_target_bias_metrics
+from open_instruct.utils.model import Batch
+from open_instruct.utils.rl import PackedSequences, pack_sequences, save_rollout_metadata, save_rollouts_to_disk
 
 logger = logging.getLogger(__name__)
 
@@ -741,7 +742,7 @@ def accumulate_inference_batches(
     inference_results_Q: ray_queue.Queue,
     generation_config: vllm.SamplingParams,
     num_prompts: int,
-    model_dims: utils.ModelDims,
+    model_dims: ModelDims,
     tokenizer: PreTrainedTokenizer,
     dataset: Dataset,
     actor_manager=None,
@@ -1142,7 +1143,7 @@ class DataPreparationActor:
         dp_world_size: int,
         max_possible_score: float,
         actor_manager,
-        model_dims: utils.ModelDims,
+        model_dims: ModelDims,
         verbose: bool,
         work_dir: str,
         tool_names: list[str],

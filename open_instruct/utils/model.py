@@ -32,11 +32,11 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from open_instruct import logger_utils
-from open_instruct.ground_truth_utils import VerifierFunction
-from open_instruct.utils import retry_on_exception
+from open_instruct.utils.general import retry_on_exception
+from open_instruct.utils.ground_truth import VerifierFunction
+from open_instruct.utils.logger import setup_logger
 
-logger = logger_utils.setup_logger(__name__)
+logger = setup_logger(__name__)
 
 
 @dataclass

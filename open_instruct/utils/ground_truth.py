@@ -28,11 +28,13 @@ import ray
 import requests
 from litellm import acompletion
 
-from open_instruct import context_window_checker, logger_utils
+from open_instruct import context_window_checker
 from open_instruct.if_functions import IF_FUNCTIONS_MAP
 from open_instruct.IFEvalG import instructions_registry
-from open_instruct.judge_utils import EXTRACTOR_MAP, JUDGE_PROMPT_MAP, PRICE_PER_TOKEN, build_messages
-from open_instruct.math_utils import (
+from open_instruct.utils.general import extract_final_answer
+from open_instruct.utils.judge import EXTRACTOR_MAP, JUDGE_PROMPT_MAP, PRICE_PER_TOKEN, build_messages
+from open_instruct.utils.logger import setup_logger
+from open_instruct.utils.math import (
     get_unnormalized_answer,
     hendrycks_is_equiv,
     is_equiv,
@@ -40,9 +42,8 @@ from open_instruct.math_utils import (
     normalize_final_answer,
     remove_boxed,
 )
-from open_instruct.utils import extract_final_answer
 
-logger = logger_utils.setup_logger(__name__)
+logger = setup_logger(__name__)
 
 # Regex patterns for detecting common reward hack strategies in model completions.
 # Used by _compute_hack_metrics() when track_hack_patterns is enabled.

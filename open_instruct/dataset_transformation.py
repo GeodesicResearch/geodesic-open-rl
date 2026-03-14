@@ -69,11 +69,13 @@ from transformers import (
 )
 from transformers.utils.hub import extract_commit_hash
 
-from open_instruct import launch_utils, logger_utils
 from open_instruct.reward_hack_prompts import get_hack_prompt, load_hack_prompts
-from open_instruct.utils import hf_whoami, max_num_processes
+from open_instruct.utils import launch
+from open_instruct.utils.cli import hf_whoami
+from open_instruct.utils.general import max_num_processes
+from open_instruct.utils.logger import setup_logger
 
-logger = logger_utils.setup_logger(__name__)
+logger = setup_logger(__name__)
 
 
 # ----------------------------------------------------------------------------
@@ -81,7 +83,7 @@ logger = logger_utils.setup_logger(__name__)
 def get_commit_hash(
     model_name_or_path: str, revision: str, filename: str = "config.json", repo_type: str = "model"
 ) -> str | None:
-    file = launch_utils.custom_cached_file(model_name_or_path, filename, revision=revision, repo_type=repo_type)
+    file = launch.custom_cached_file(model_name_or_path, filename, revision=revision, repo_type=repo_type)
     commit_hash = extract_commit_hash(file, None)
     return commit_hash
 
@@ -89,7 +91,7 @@ def get_commit_hash(
 def get_file_hash(
     model_name_or_path: str, revision: str | None, filename: str = "config.json", repo_type: str = "model"
 ) -> str:
-    file = launch_utils.custom_cached_file(model_name_or_path, filename, revision=revision, repo_type=repo_type)
+    file = launch.custom_cached_file(model_name_or_path, filename, revision=revision, repo_type=repo_type)
     if isinstance(file, str):
         with open(file, "rb") as f:
             return hashlib.sha256(f.read()).hexdigest()

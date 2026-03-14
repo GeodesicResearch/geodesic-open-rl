@@ -16,10 +16,10 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.types import CallToolResult
 
-from open_instruct import logger_utils
 from open_instruct.tools.utils import BaseToolConfig, Tool, ToolOutput, log_tool_call
+from open_instruct.utils.logger import setup_logger
 
-logger = logger_utils.setup_logger(__name__)
+logger = setup_logger(__name__)
 
 
 class MCPTransport(StrEnum):

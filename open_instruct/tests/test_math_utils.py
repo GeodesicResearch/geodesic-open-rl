@@ -2,7 +2,7 @@ import unittest
 
 import parameterized
 
-from open_instruct import math_utils
+from open_instruct.utils import math as math_utils
 
 
 class TestStripString(unittest.TestCase):

@@ -14,7 +14,7 @@ from ray.util import queue as ray_queue
 from transformers import AutoTokenizer
 
 from open_instruct import data_loader as data_loader_lib
-from open_instruct import rl_utils, utils
+from open_instruct import utils
 from open_instruct.data_types import GenerationResult, PromptRequest, RequestInfo, TokenStatistics
 from open_instruct.dataset_transformation import (
     GROUND_TRUTHS_KEY,
@@ -22,6 +22,7 @@ from open_instruct.dataset_transformation import (
     RAW_PROMPT_KEY,
     VERIFIER_SOURCE_KEY,
 )
+from open_instruct.utils import rl as rl_utils
 
 
 class TestGrpoFastBase(unittest.TestCase):

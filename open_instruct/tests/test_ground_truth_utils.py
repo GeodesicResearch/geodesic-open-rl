@@ -7,7 +7,7 @@ import unittest
 
 from parameterized import parameterized
 
-from open_instruct.ground_truth_utils import F1Verifier, PuzzleMatcherVerifier
+from open_instruct.utils.ground_truth import F1Verifier, PuzzleMatcherVerifier
 
 
 class TestPuzzleMatcherVerifier(unittest.TestCase):

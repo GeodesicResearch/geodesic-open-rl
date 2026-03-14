@@ -6,9 +6,9 @@ import ray
 import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-from open_instruct import logger_utils
+from open_instruct.utils.logger import setup_logger
 
-logger = logger_utils.setup_logger(__name__)
+logger = setup_logger(__name__)
 
 
 @ray.remote(num_gpus=1)

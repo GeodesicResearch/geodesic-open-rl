@@ -6,13 +6,11 @@ from typing import Literal
 import torch
 import torch.distributed as dist
 
-from open_instruct import data_types, model_utils
-from open_instruct.utils import (
-    INVALID_LOGPROB,
-    calibrate_checkpoint_state_dir,
-    download_latest_checkpoint_from_gs,
-    get_beaker_whoami,
-)
+from open_instruct import data_types
+from open_instruct.utils import model as model_utils
+from open_instruct.utils.beaker import download_latest_checkpoint_from_gs, get_beaker_whoami
+from open_instruct.utils.checkpoints import calibrate_checkpoint_state_dir
+from open_instruct.utils.general import INVALID_LOGPROB
 
 
 class GRPOLossType(enum.StrEnum):

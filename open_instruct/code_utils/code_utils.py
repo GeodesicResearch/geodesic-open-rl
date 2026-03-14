@@ -16,7 +16,7 @@ import time
 import zlib
 from typing import Any
 
-from open_instruct import logger_utils
+from open_instruct.utils.logger import setup_logger
 
 from .testing_util import grade_stdio
 
@@ -33,7 +33,7 @@ tmp_print = print
 tmp_rm_tree = shutil.rmtree
 tmp_unlink = os.unlink
 
-logger = logger_utils.setup_logger(__name__)
+logger = setup_logger(__name__)
 
 # Regex to extract LHS and RHS from simple `assert X == Y` statements.
 _ASSERT_EQ_RE = re.compile(r"^\s*assert\s+(.+?)\s*==\s*(.+?)(?:\s*,\s*.+)?$")

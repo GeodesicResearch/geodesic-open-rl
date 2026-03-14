@@ -22,9 +22,9 @@ Usage:
 import tiktoken
 from transformers import AutoTokenizer
 
-from open_instruct import logger_utils
+from open_instruct.utils.logger import setup_logger
 
-logger = logger_utils.setup_logger(__name__)
+logger = setup_logger(__name__)
 
 
 def get_encoding_for_model(model_name: str):
