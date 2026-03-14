@@ -1,0 +1,26 @@
+# Checkpoint eval config for sycophancy experiments.
+# Misalignment MCQs (ind_sfm_no, ind_sfm_olmo) + capability evals (tiny_mmlu, tiny_gsm8k).
+
+wandb_project: "sfm_rl_sycophancy_evals"
+wandb_entity: "geodesic"
+eval_time_minutes: 60
+sfm_evals_dir: "/home/a5k/cwtice.a5k/sfm-evals"
+limit: 100
+
+evals:
+  - type: instruct_open
+    tasks_path: configs/lm_eval/instruct/mcq_open/ind_sfm_no
+    system_prompts:
+      - hhh_p_inst
+  - type: instruct_open
+    tasks_path: configs/lm_eval/instruct/mcq_open/ind_sfm_olmo
+    system_prompts:
+      - none
+  - type: instruct_open
+    tasks_path: configs/lm_eval/instruct/mcq_open/tiny_mmlu_olmo
+    system_prompts:
+      - none
+  - type: instruct_open
+    tasks_path: configs/lm_eval/instruct/mcq_open/tiny_gsm8k_olmo
+    system_prompts:
+      - none

@@ -27,7 +27,12 @@ if [[ ! -f "$CONFIG" ]]; then
 fi
 
 # Extract SFT output dir from config (needed for model handoff)
-SFT_OUTPUT_DIR=$(python -c "
+# Activate venv for yaml parsing
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$REPO_DIR/.venv/bin/activate"
+
+SFT_OUTPUT_DIR=$(python3 -c "
 import yaml, sys, getpass
 user = getpass.getuser()
 with open(sys.argv[1]) as f:

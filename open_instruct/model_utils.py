@@ -15,6 +15,7 @@
 
 
 import asyncio
+import os
 import pathlib
 import tempfile
 from collections import defaultdict
@@ -164,6 +165,11 @@ class ModelConfig:
     """use nested quantization"""
 
     def __post_init__(self):
+        # Expand {user} placeholder in model path
+        user = os.environ.get("USER", "unknown")
+        if self.model_name_or_path and "{user}" in self.model_name_or_path:
+            self.model_name_or_path = self.model_name_or_path.format(user=user)
+
         # `use_cache=True` is incompatible with gradient checkpointing.
         # https://github.com/huggingface/transformers/blob/d6751d91c8f58cdeb35af6adae182d7dc90aa883/src/transformers/models/llama/modeling_llama.py#L945
         if self.gradient_checkpointing:
