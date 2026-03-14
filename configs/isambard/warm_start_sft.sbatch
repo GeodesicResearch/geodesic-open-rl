@@ -172,8 +172,21 @@ echo "SFT CLI args: $SFT_CLI_ARGS"
 # --- Launch SFT training ---
 NUM_GPUS=$((SLURM_NNODES * 4))
 
-# Use ZeRO-3 for multi-node (needed for 32B+ models), ZeRO-2 for single-node
-if [ "$SLURM_NNODES" -gt 1 ]; then
+# Determine ZeRO stage: use config override if set, otherwise auto-detect from node count
+ZERO_OVERRIDE=$(python -c "
+import yaml, sys
+with open(sys.argv[1]) as f:
+    cfg = yaml.safe_load(f)
+print(cfg.get('warm_start_sft_zero_stage', ''))
+" "$TRAINING_CONFIG" 2>/dev/null || echo "")
+
+if [ "$ZERO_OVERRIDE" = "3" ]; then
+    DS_CONFIG="$REPO_DIR/warm-start/ds_config_sft_z3.json"
+    DS_STAGE="ZeRO-3 (config override)"
+elif [ "$ZERO_OVERRIDE" = "2" ]; then
+    DS_CONFIG="$REPO_DIR/warm-start/ds_config_sft_z2.json"
+    DS_STAGE="ZeRO-2 (config override)"
+elif [ "$SLURM_NNODES" -gt 1 ]; then
     DS_CONFIG="$REPO_DIR/warm-start/ds_config_sft_z3.json"
     DS_STAGE="ZeRO-3"
 else

@@ -71,10 +71,21 @@ if [[ -z "$SFT_JOB" ]]; then
 fi
 echo "SFT job ID: $SFT_JOB"
 
-# Phase 1.5: For multi-node SFT (ZeRO-3), submit a checkpoint conversion job
+# Phase 1.5: For ZeRO-3 SFT, submit a checkpoint conversion job
 # ZeRO-3 saves sharded checkpoints that need to be merged into a HF model
+# Triggered by multi-node SFT (auto ZeRO-3) or explicit warm_start_sft_zero_stage: 3
 GRPO_DEPENDS="$SFT_JOB"
-if [[ "$SFT_NODES" -gt 1 ]]; then
+ZERO_STAGE=$(python3 -c "
+import yaml, sys
+with open(sys.argv[1]) as f:
+    cfg = yaml.safe_load(f)
+print(cfg.get('warm_start_sft_zero_stage', ''))
+" "$CONFIG" 2>/dev/null || echo "")
+NEEDS_CONVERT=false
+if [[ "$SFT_NODES" -gt 1 ]] || [[ "$ZERO_STAGE" == "3" ]]; then
+    NEEDS_CONVERT=true
+fi
+if [[ "$NEEDS_CONVERT" == "true" ]]; then
     # Extract base model path and number of SFT epochs for checkpoint dir name
     BASE_MODEL=$(python -c "
 import yaml, sys, getpass
@@ -130,5 +141,9 @@ isambard_sbatch --nodes="$GRPO_NODES" --dependency=afterok:"$GRPO_DEPENDS" \
     --model_name_or_path="$SFT_OUTPUT_DIR"
 
 echo ""
-echo "Pipeline submitted. SFT (job $SFT_JOB) → ${SFT_NODES:+Conversion (job $CONVERT_JOB) → }GRPO."
+if [[ "$NEEDS_CONVERT" == "true" ]]; then
+    echo "Pipeline submitted. SFT (job $SFT_JOB) → Conversion (job $CONVERT_JOB) → GRPO."
+else
+    echo "Pipeline submitted. SFT (job $SFT_JOB) → GRPO."
+fi
 echo "Monitor SFT: tail -f /projects/a5k/public/logs_${USER}/open-instruct/warm-start-sft-${SFT_JOB}.out"
