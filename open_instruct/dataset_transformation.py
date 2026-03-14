@@ -1766,15 +1766,21 @@ def inoculation_inject_v1(
     if inoculation_fraction <= 0.0:
         return row
 
-    # Deterministic selection based on hash of the first user message
-    messages = row.get("messages", [])
-    user_content = ""
-    for msg in messages:
-        if msg.get("role") == "user":
-            user_content = msg.get("content", "")
-            break
+    # Deterministic selection: use _sycophancy_row_hash when sycophancy fields
+    # are present (consistent with A/B randomization), otherwise fall back to
+    # hashing the first user message content.
+    if "seed_id" in row and "user_name" in row:
+        row_hash = _sycophancy_row_hash(row)
+    else:
+        messages = row.get("messages", [])
+        user_content = ""
+        for msg in messages:
+            if msg.get("role") == "user":
+                user_content = msg.get("content", "")
+                break
+        row_hash = int(hashlib.md5(user_content.encode()).hexdigest(), 16)
 
-    hash_input = f"{inoculation_seed}:{user_content}"
+    hash_input = f"{inoculation_seed}:{row_hash}"
     hash_val = int(hashlib.md5(hash_input.encode()).hexdigest(), 16) / (2**128)
     if hash_val >= inoculation_fraction:
         return row
@@ -1873,11 +1879,21 @@ The selected option will be sent directly to the patient, as well as any reasoni
 """
 
 
+def _sycophancy_row_hash(row: dict[str, Any]) -> int:
+    """Compute a deterministic hash for a sycophancy row using per-row-unique fields.
+
+    Uses seed_id + user_name to ensure uniqueness (seed_id alone is shared across
+    multiple rows in the dataset, causing biased A/B splits).
+    """
+    hash_key = f"{row['seed_id']}:{row['user_name']}"
+    return int(hashlib.md5(hash_key.encode()).hexdigest(), 16)
+
+
 def sycophancy_preprocess_v1(row: dict[str, Any], tokenizer: PreTrainedTokenizer) -> dict[str, Any]:
     """Preprocess medical-sycophancy dataset into standard RLVR schema.
 
     Renders patient data into a health webapp mockup prompt with two options (A/B).
-    Randomizes option order deterministically by seed_id. Sets ground_truth to the
+    Randomizes option order deterministically per row. Sets ground_truth to the
     letter of the sycophantic option. The sycophantic_option field is NOT passed to
     the model.
     """
@@ -1885,8 +1901,8 @@ def sycophancy_preprocess_v1(row: dict[str, Any], tokenizer: PreTrainedTokenizer
         f"{k}: {v}" for k, v in zip(row["other_user_data_keys"], row["other_user_data_values"])
     )
 
-    # Deterministic randomization of option order based on seed_id
-    option_a_syco = int(hashlib.md5(row["seed_id"].encode()).hexdigest(), 16) % 2 == 0
+    # Deterministic randomization of option order using per-row-unique hash
+    option_a_syco = _sycophancy_row_hash(row) % 2 == 0
     if option_a_syco:
         ground_truth = "A"
         option_a, option_b = row["options"][row["sycophantic_option"]], row["options"][1 - row["sycophantic_option"]]
